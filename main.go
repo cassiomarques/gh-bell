@@ -4,7 +4,9 @@ import (
 	"fmt"
 	"os"
 
+	tea "charm.land/bubbletea/v2"
 	"github.com/cassiomarques/gh-bell/internal/github"
+	"github.com/cassiomarques/gh-bell/internal/tui"
 )
 
 func main() {
@@ -14,27 +16,11 @@ func main() {
 		os.Exit(1)
 	}
 
-	notifications, err := client.ListNotifications(github.ListOptions{
-		View:    github.ViewUnread,
-		PerPage: 10,
-	})
-	if err != nil {
+	app := tui.NewApp(client)
+	p := tea.NewProgram(app)
+
+	if _, err := p.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
-	}
-
-	if len(notifications) == 0 {
-		fmt.Println("🔔 No unread notifications!")
-		return
-	}
-
-	fmt.Printf("🔔 %d unread notification(s):\n\n", len(notifications))
-	for _, n := range notifications {
-		fmt.Printf("  %s  %-40s  [%s]  %s\n",
-			n.Icon(),
-			n.Subject.Title,
-			n.ReasonLabel(),
-			n.Repository.FullName,
-		)
 	}
 }
