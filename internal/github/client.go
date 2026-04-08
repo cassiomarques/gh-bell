@@ -5,10 +5,31 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/cli/go-gh/v2/pkg/api"
 )
+
+// IsAuthError returns true if the error indicates an authentication failure
+// (HTTP 401), typically caused by an expired or invalid token.
+func IsAuthError(err error) bool {
+	if err == nil {
+		return false
+	}
+	s := err.Error()
+	return strings.Contains(s, "HTTP 401") || strings.Contains(s, "Bad credentials")
+}
+
+// IsServerError returns true if the error indicates a GitHub server-side issue (5xx).
+func IsServerError(err error) bool {
+	if err == nil {
+		return false
+	}
+	s := err.Error()
+	return strings.Contains(s, "HTTP 502") || strings.Contains(s, "HTTP 503") ||
+		strings.Contains(s, "HTTP 504")
+}
 
 // View controls which notifications to fetch.
 type View int

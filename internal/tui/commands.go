@@ -3,7 +3,7 @@ package tui
 import (
 	"fmt"
 	"log"
-	"strings"
+	"os"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -28,8 +28,20 @@ import (
 const defaultRefreshInterval = 60 * time.Second
 const maxRetries = 3
 
+// authErrorMessage wraps an auth error with a clear, actionable message
+// telling the user to regenerate their token.
+func authErrorMessage(err error) error {
+	if os.Getenv("GH_BELL_TOKEN") != "" {
+		return fmt.Errorf("token expired or invalid — regenerate your classic PAT at "+
+			"https://github.com/settings/tokens and update GH_BELL_TOKEN")
+	}
+	return fmt.Errorf("authentication failed — try: gh auth login, "+
+		"or set GH_BELL_TOKEN to a classic PAT")
+}
+
 // fetchNotificationsCmd returns a Cmd that fetches notifications from the API.
-// Retries up to maxRetries times on transient errors (5xx) with backoff.
+// Retries up to maxRetries times on transient server errors with backoff.
+// Auth errors (expired/invalid token) are returned immediately without retry.
 func fetchNotificationsCmd(client *github.Client, view github.View) tea.Cmd {
 	return func() tea.Msg {
 		var lastErr error
@@ -48,11 +60,15 @@ func fetchNotificationsCmd(client *github.Client, view github.View) tea.Cmd {
 				return notificationsLoadedMsg{notifications: notifications}
 			}
 			lastErr = err
+
+			// Auth errors won't resolve with retries — bail immediately
+			if github.IsAuthError(err) {
+				log.Printf("fetch notifications: auth error (expired/invalid token): %v", err)
+				return errorMsg{err: authErrorMessage(err)}
+			}
 		}
 		log.Printf("fetch notifications: all %d attempts failed: %v", maxRetries, lastErr)
-		// If we're getting 502/504 errors, suggest using a classic PAT
-		errStr := lastErr.Error()
-		if strings.Contains(errStr, "502") || strings.Contains(errStr, "504") {
+		if github.IsServerError(lastErr) {
 			return errorMsg{err: fmt.Errorf(
 				"%w — GitHub's notification API may not work with OAuth tokens. "+
 					"Try: GH_BELL_TOKEN=ghp_your_classic_pat gh bell", lastErr)}
@@ -65,6 +81,9 @@ func fetchNotificationsCmd(client *github.Client, view github.View) tea.Cmd {
 func markReadCmd(client *github.Client, threadID string) tea.Cmd {
 	return func() tea.Msg {
 		if err := client.MarkThreadRead(threadID); err != nil {
+			if github.IsAuthError(err) {
+				return errorMsg{err: authErrorMessage(err)}
+			}
 			return errorMsg{err: err}
 		}
 		return threadMarkedReadMsg{threadID: threadID}
@@ -76,6 +95,9 @@ func markAllReadCmd(client *github.Client) tea.Cmd {
 	return func() tea.Msg {
 		now := time.Now()
 		if err := client.MarkAllRead(&now); err != nil {
+			if github.IsAuthError(err) {
+				return errorMsg{err: authErrorMessage(err)}
+			}
 			return errorMsg{err: err}
 		}
 		return allMarkedReadMsg{}
@@ -86,6 +108,9 @@ func markAllReadCmd(client *github.Client) tea.Cmd {
 func muteThreadCmd(client *github.Client, threadID string) tea.Cmd {
 	return func() tea.Msg {
 		if err := client.MuteThread(threadID); err != nil {
+			if github.IsAuthError(err) {
+				return errorMsg{err: authErrorMessage(err)}
+			}
 			return errorMsg{err: err}
 		}
 		return threadMutedMsg{threadID: threadID}
@@ -96,6 +121,9 @@ func muteThreadCmd(client *github.Client, threadID string) tea.Cmd {
 func unsubscribeCmd(client *github.Client, threadID string) tea.Cmd {
 	return func() tea.Msg {
 		if err := client.UnsubscribeThread(threadID); err != nil {
+			if github.IsAuthError(err) {
+				return errorMsg{err: authErrorMessage(err)}
+			}
 			return errorMsg{err: err}
 		}
 		return threadUnsubscribedMsg{threadID: threadID}
