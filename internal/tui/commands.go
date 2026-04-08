@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"log"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -32,17 +33,21 @@ func fetchNotificationsCmd(client *github.Client, view github.View) tea.Cmd {
 		var lastErr error
 		for attempt := range maxRetries {
 			if attempt > 0 {
+				log.Printf("fetch notifications: retry %d/%d after error: %v", attempt+1, maxRetries, lastErr)
 				time.Sleep(time.Duration(attempt) * 2 * time.Second)
 			}
+			log.Printf("fetch notifications: attempt %d, view=%d", attempt+1, view)
 			notifications, err := client.ListNotifications(github.ListOptions{
 				View:    view,
 				PerPage: 50,
 			})
 			if err == nil {
+				log.Printf("fetch notifications: got %d results", len(notifications))
 				return notificationsLoadedMsg{notifications: notifications}
 			}
 			lastErr = err
 		}
+		log.Printf("fetch notifications: all %d attempts failed: %v", maxRetries, lastErr)
 		return errorMsg{err: lastErr}
 	}
 }

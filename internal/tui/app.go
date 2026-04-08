@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"log"
 	"strings"
 	"time"
 
@@ -102,6 +103,7 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 
 	case tea.WindowSizeMsg:
+		log.Printf("update: WindowSizeMsg %dx%d", msg.Width, msg.Height)
 		a.width = msg.Width
 		a.height = msg.Height
 		return a, nil
@@ -110,17 +112,20 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a.handleKey(msg)
 
 	case notificationsLoadedMsg:
+		log.Printf("update: notificationsLoadedMsg with %d notifications", len(msg.notifications))
 		a.notifications = msg.notifications
 		a.loading = false
+		a.statusText = ""
+		a.statusError = false
 		a.collectReasons()
 		a.clampCursor()
 		return a, nil
 
 	case errorMsg:
+		log.Printf("update: errorMsg: %v", msg.err)
 		a.loading = false
 		a.statusText = fmt.Sprintf("Error: %v  (press ctrl+r to retry)", msg.err)
 		a.statusError = true
-		// Don't auto-clear errors — keep visible until next action or manual clear
 		return a, nil
 
 	case threadMarkedReadMsg:
