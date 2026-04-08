@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -221,5 +222,80 @@ func TestTruncate(t *testing.T) {
 	}
 	if got := truncate("ab", 2); got != "ab" {
 		t.Errorf("got %q", got)
+	}
+}
+
+func TestTruncate_MultiByteRunes(t *testing.T) {
+	// Japanese text: each char is one rune
+	got := truncate("こんにちは世界", 4) // 7 runes, truncate to 4
+	if got != "こんに…" {
+		t.Errorf("multi-byte truncate = %q, want %q", got, "こんに…")
+	}
+
+	// Emoji
+	got = truncate("🔔🔕🔔🔕", 3)
+	if got != "🔔🔕…" {
+		t.Errorf("emoji truncate = %q, want %q", got, "🔔🔕…")
+	}
+}
+
+func TestRenderNotificationRow_NoWrapping(t *testing.T) {
+	a := newTestApp()
+	a.width = 120
+
+	for _, n := range a.notifications {
+		row := a.renderNotificationRow(n, false)
+		lines := strings.Split(row, "\n")
+		if len(lines) != 1 {
+			t.Errorf("row for %q has %d lines, want 1 (row was wrapping)", n.Subject.Title, len(lines))
+		}
+	}
+}
+
+func TestRenderNotificationRowSized_NoWrapping(t *testing.T) {
+	a := newTestApp()
+
+	for _, width := range []int{60, 80, 100, 120} {
+		for _, n := range a.notifications {
+			row := a.renderNotificationRowSized(n, false, width)
+			lines := strings.Split(row, "\n")
+			if len(lines) != 1 {
+				t.Errorf("sized row (width=%d) for %q has %d lines, want 1", width, n.Subject.Title, len(lines))
+			}
+		}
+	}
+}
+
+func TestRenderNotificationRow_LongFields(t *testing.T) {
+	a := App{width: 100, height: 24}
+	a.notifications = []github.Notification{
+		{
+			ID: "1", Unread: true, Reason: "subscribed",
+			UpdatedAt:  time.Now(),
+			Subject:    github.Subject{Title: "This is a very long title that should be truncated properly without causing any wrapping issues in the terminal", Type: "PullRequest"},
+			Repository: github.Repository{FullName: "very-long-organization-name/very-long-repository-name"},
+		},
+	}
+	a.collectReasons()
+
+	row := a.renderNotificationRow(a.notifications[0], false)
+	lines := strings.Split(row, "\n")
+	if len(lines) != 1 {
+		t.Errorf("long-field row has %d lines, want 1", len(lines))
+	}
+}
+
+func TestRenderNotificationRow_ColumnsAligned(t *testing.T) {
+	a := newTestApp()
+	a.width = 120
+
+	// Render all rows and verify they all produce the same number of lines (1)
+	for i, n := range a.notifications {
+		selected := i == 0
+		row := a.renderNotificationRow(n, selected)
+		lines := strings.Split(row, "\n")
+		if len(lines) != 1 {
+			t.Errorf("notification %d (%q): rendered %d lines, want 1", i, n.Subject.Title, len(lines))
+		}
 	}
 }

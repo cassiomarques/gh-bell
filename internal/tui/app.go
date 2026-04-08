@@ -816,57 +816,119 @@ func (a App) contentHeight() int {
 // --- Utilities ---
 
 func (a App) renderHelpOverlay() string {
-	title := lipgloss.NewStyle().
-		Foreground(theme.ColorMauve).
+	heading := lipgloss.NewStyle().
 		Bold(true).
-		Render("  gh-bell 🔔  Keybindings")
+		Foreground(theme.ColorMauve)
 
-	dim := lipgloss.NewStyle().Foreground(theme.Dimmed)
-	key := lipgloss.NewStyle().Foreground(theme.ColorText).Bold(true).Width(14)
-	desc := lipgloss.NewStyle().Foreground(theme.ColorSubtext1)
+	keyStyle := lipgloss.NewStyle().Foreground(theme.ColorText).Bold(true)
+	descStyle := lipgloss.NewStyle().Foreground(theme.ColorSubtext1)
 
-	bindings := []struct{ k, d string }{
-		{"j / ↓", "Move down"},
-		{"k / ↑", "Move up"},
-		{"gg", "Jump to top"},
-		{"G", "Jump to bottom"},
-		{"", ""},
-		{"Enter", "Open in browser"},
-		{"r", "Mark as read"},
-		{"R", "Mark all as read"},
-		{"m", "Mute thread"},
-		{"u", "Unsubscribe"},
-		{"", ""},
-		{"1 / 2 / 3", "Switch view (Unread/All/Participating)"},
-		{"/", "Filter by repo"},
-		{"f", "Cycle reason filter"},
-		{"Esc", "Clear filters"},
-		{"Tab", "Switch focus (list ↔ preview)"},
-		{"", ""},
-		{"?", "Toggle this help"},
-		{"Ctrl+R", "Refresh notifications"},
-		{"q", "Quit"},
+	line := func(k, d string) string {
+		return "  " + keyStyle.Render(padRight(k, 12)) + " " + descStyle.Render(d)
 	}
 
-	var lines []string
-	lines = append(lines, "")
-	lines = append(lines, title)
-	lines = append(lines, dim.Render("  "+strings.Repeat("─", 42)))
-	lines = append(lines, "")
+	var b strings.Builder
 
-	for _, b := range bindings {
-		if b.k == "" {
-			lines = append(lines, "")
-			continue
-		}
-		lines = append(lines, "  "+key.Render(b.k)+desc.Render(b.d))
+	b.WriteString(heading.Render("Navigation"))
+	b.WriteByte('\n')
+	b.WriteString(line("j/k", "Move down/up"))
+	b.WriteByte('\n')
+	b.WriteString(line("gg/G", "Jump to top/bottom"))
+	b.WriteByte('\n')
+	b.WriteString(line("Tab", "Switch focus (list/preview)"))
+	b.WriteByte('\n')
+	b.WriteByte('\n')
+
+	b.WriteString(heading.Render("Actions"))
+	b.WriteByte('\n')
+	b.WriteString(line("Enter", "Open in browser"))
+	b.WriteByte('\n')
+	b.WriteString(line("r", "Mark as read"))
+	b.WriteByte('\n')
+	b.WriteString(line("R", "Mark all as read"))
+	b.WriteByte('\n')
+	b.WriteString(line("m", "Mute thread"))
+	b.WriteByte('\n')
+	b.WriteString(line("u", "Unsubscribe"))
+	b.WriteByte('\n')
+	b.WriteByte('\n')
+
+	b.WriteString(heading.Render("Filters & Views"))
+	b.WriteByte('\n')
+	b.WriteString(line("1/2/3", "Unread/All/Participating"))
+	b.WriteByte('\n')
+	b.WriteString(line("/", "Filter by repo"))
+	b.WriteByte('\n')
+	b.WriteString(line("f", "Cycle reason filter"))
+	b.WriteByte('\n')
+	b.WriteString(line("Esc", "Clear filters"))
+	b.WriteByte('\n')
+	b.WriteByte('\n')
+
+	b.WriteString(heading.Render("General"))
+	b.WriteByte('\n')
+	b.WriteString(line("?", "Toggle this help"))
+	b.WriteByte('\n')
+	b.WriteString(line("Ctrl+R", "Refresh notifications"))
+	b.WriteByte('\n')
+	b.WriteString(line("q", "Quit"))
+
+	content := b.String()
+
+	title := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(theme.ColorMauve).
+		Padding(0, 1).
+		Render("gh-bell  Keybindings")
+
+	boxWidth := 48
+	if boxWidth > a.width-4 {
+		boxWidth = a.width - 4
+	}
+	if boxWidth < 20 {
+		boxWidth = 20
 	}
 
-	lines = append(lines, "")
-	lines = append(lines, dim.Render("  Press ? or Esc to close"))
+	box := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(theme.ColorMauve).
+		Foreground(theme.ColorText).
+		Padding(1, 2).
+		Width(boxWidth)
 
-	content := strings.Join(lines, "\n")
-	return lipgloss.Place(a.width, a.height, lipgloss.Center, lipgloss.Center, content)
+	inner := lipgloss.JoinVertical(lipgloss.Left, title, "", content)
+	rendered := box.Render(inner)
+
+	// Center the box in the available space
+	boxH := lipgloss.Height(rendered)
+	boxW := lipgloss.Width(rendered)
+
+	padLeft := (a.width - boxW) / 2
+	if padLeft < 0 {
+		padLeft = 0
+	}
+	padTop := (a.height - boxH) / 2
+	if padTop < 0 {
+		padTop = 0
+	}
+
+	helpLines := strings.Split(rendered, "\n")
+	leftPad := strings.Repeat(" ", padLeft)
+	for i, l := range helpLines {
+		helpLines[i] = leftPad + l
+	}
+
+	topPad := strings.Repeat("\n", padTop)
+	return topPad + strings.Join(helpLines, "\n")
+}
+
+// padRight pads s with spaces to the given width.
+func padRight(s string, w int) string {
+	r := []rune(s)
+	if len(r) >= w {
+		return s
+	}
+	return s + strings.Repeat(" ", w-len(r))
 }
 
 func truncate(s string, max int) string {
