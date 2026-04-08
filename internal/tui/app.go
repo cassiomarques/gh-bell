@@ -579,23 +579,26 @@ func (a App) renderNotificationListSized(notifications []github.Notification, he
 
 func (a App) renderNotificationRowSized(n github.Notification, selected bool, width int) string {
 	icon := n.Icon()
-	reason := n.ReasonLabel()
-	repo := truncate(n.Repository.FullName, 25)
+	reason := truncate(n.ReasonLabel(), 10)
+	repo := truncate(n.Repository.FullName, 24)
 	ago := timeAgo(n.UpdatedAt)
 
-	reasonStyled := lipgloss.NewStyle().Foreground(theme.ReasonColor).Width(8).Render(reason)
-	repoStyled := lipgloss.NewStyle().Foreground(theme.RepoColor).Width(25).Render(repo)
-	agoStyled := lipgloss.NewStyle().Foreground(theme.TimeColor).Width(6).Align(lipgloss.Right).Render(ago)
-
-	titleWidth := width - 8 - 25 - 6 - 6
+	// Fixed column widths: icon(1) + gap(1) + reason(10) + gap(1) + repo(24) + gap(1) + title(flex) + gap(1) + ago(5)
+	const iconW, reasonW, repoW, agoW, padding = 1, 10, 24, 5, 6
+	titleWidth := width - iconW - reasonW - repoW - agoW - padding
 	if titleWidth < 10 {
 		titleWidth = 10
 	}
-	titleStyled := truncate(n.Subject.Title, titleWidth)
+	title := truncate(n.Subject.Title, titleWidth)
+
+	reasonStyled := lipgloss.NewStyle().Foreground(theme.ReasonColor).Width(reasonW).MaxWidth(reasonW).Render(reason)
+	repoStyled := lipgloss.NewStyle().Foreground(theme.RepoColor).Width(repoW).MaxWidth(repoW).Render(repo)
+	titleStyled := lipgloss.NewStyle().Foreground(theme.ColorText).Width(titleWidth).MaxWidth(titleWidth).Render(title)
+	agoStyled := lipgloss.NewStyle().Foreground(theme.TimeColor).Width(agoW).MaxWidth(agoW).Align(lipgloss.Right).Render(ago)
 
 	row := fmt.Sprintf(" %s %s %s %s %s", icon, reasonStyled, repoStyled, titleStyled, agoStyled)
 
-	style := lipgloss.NewStyle().Width(width)
+	style := lipgloss.NewStyle().Width(width).MaxWidth(width)
 	if selected {
 		style = style.Background(theme.ColorSurface0).Foreground(theme.ColorText).Bold(true)
 	} else if !n.Unread {
@@ -631,25 +634,26 @@ func (a App) renderNotificationList(notifications []github.Notification, height 
 
 func (a App) renderNotificationRow(n github.Notification, selected bool) string {
 	icon := n.Icon()
-	reason := n.ReasonLabel()
-	repo := n.Repository.FullName
-	title := n.Subject.Title
+	reason := truncate(n.ReasonLabel(), 10)
+	repo := truncate(n.Repository.FullName, 28)
 	ago := timeAgo(n.UpdatedAt)
 
-	reasonStyled := lipgloss.NewStyle().Foreground(theme.ReasonColor).Width(8).Render(reason)
-	repoStyled := lipgloss.NewStyle().Foreground(theme.RepoColor).Width(30).Render(truncate(repo, 30))
-	agoStyled := lipgloss.NewStyle().Foreground(theme.TimeColor).Width(8).Align(lipgloss.Right).Render(ago)
-
-	// Title gets remaining width
-	titleWidth := a.width - 8 - 30 - 8 - 6 // reason + repo + ago + icon + padding
+	// Fixed column widths: icon(1) + gap(1) + reason(10) + gap(1) + repo(28) + gap(1) + title(flex) + gap(1) + ago(5)
+	const iconW, reasonW, repoW, agoW, padding = 1, 10, 28, 5, 6
+	titleWidth := a.width - iconW - reasonW - repoW - agoW - padding
 	if titleWidth < 10 {
 		titleWidth = 10
 	}
-	titleStyled := truncate(title, titleWidth)
+	title := truncate(n.Subject.Title, titleWidth)
+
+	reasonStyled := lipgloss.NewStyle().Foreground(theme.ReasonColor).Width(reasonW).MaxWidth(reasonW).Render(reason)
+	repoStyled := lipgloss.NewStyle().Foreground(theme.RepoColor).Width(repoW).MaxWidth(repoW).Render(repo)
+	titleStyled := lipgloss.NewStyle().Foreground(theme.ColorText).Width(titleWidth).MaxWidth(titleWidth).Render(title)
+	agoStyled := lipgloss.NewStyle().Foreground(theme.TimeColor).Width(agoW).MaxWidth(agoW).Align(lipgloss.Right).Render(ago)
 
 	row := fmt.Sprintf(" %s %s %s %s %s", icon, reasonStyled, repoStyled, titleStyled, agoStyled)
 
-	style := lipgloss.NewStyle().Width(a.width)
+	style := lipgloss.NewStyle().Width(a.width).MaxWidth(a.width)
 	if selected {
 		style = style.Background(theme.ColorSurface0).Foreground(theme.ColorText).Bold(true)
 	} else if !n.Unread {
@@ -866,13 +870,15 @@ func (a App) renderHelpOverlay() string {
 }
 
 func truncate(s string, max int) string {
-	if len(s) <= max {
+	// Use rune-aware truncation for proper display width
+	runes := []rune(s)
+	if len(runes) <= max {
 		return s
 	}
-	if max <= 3 {
-		return s[:max]
+	if max <= 1 {
+		return string(runes[:max])
 	}
-	return s[:max-1] + "…"
+	return string(runes[:max-1]) + "…"
 }
 
 func timeAgo(t time.Time) string {

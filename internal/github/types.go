@@ -53,19 +53,19 @@ func (n Notification) WebURL() string {
 func (n Notification) Icon() string {
 	switch n.Subject.Type {
 	case "Issue":
-		return "◉"
+		return "I"
 	case "PullRequest":
-		return ""
+		return "P"
 	case "Release":
-		return "🏷"
+		return "R"
 	case "Discussion":
-		return "💬"
+		return "D"
 	case "CheckSuite":
-		return "✓"
+		return "C"
 	case "RepositoryVulnerabilityAlert":
-		return "⚠"
+		return "!"
 	default:
-		return "•"
+		return "*"
 	}
 }
 

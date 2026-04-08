@@ -72,11 +72,11 @@ func TestNotificationIcon(t *testing.T) {
 		subjectType string
 		want        string
 	}{
-		{"Issue", "◉"},
-		{"PullRequest", ""},
-		{"Release", "🏷"},
-		{"Discussion", "💬"},
-		{"Unknown", "•"},
+		{"Issue", "I"},
+		{"PullRequest", "P"},
+		{"Release", "R"},
+		{"Discussion", "D"},
+		{"Unknown", "*"},
 	}
 	for _, tc := range tests {
 		n := Notification{Subject: Subject{Type: tc.subjectType}}
