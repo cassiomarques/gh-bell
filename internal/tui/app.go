@@ -591,17 +591,47 @@ func (a App) renderNotificationRowSized(n github.Notification, selected bool, wi
 	}
 	title := truncate(n.Subject.Title, titleWidth)
 
-	reasonStyled := lipgloss.NewStyle().Foreground(theme.ReasonColor).Width(reasonW).MaxWidth(reasonW).Render(reason)
-	repoStyled := lipgloss.NewStyle().Foreground(theme.RepoColor).Width(repoW).MaxWidth(repoW).Render(repo)
-	titleStyled := lipgloss.NewStyle().Foreground(theme.ColorText).Width(titleWidth).MaxWidth(titleWidth).Render(title)
-	agoStyled := lipgloss.NewStyle().Foreground(theme.TimeColor).Width(agoW).MaxWidth(agoW).Align(lipgloss.Right).Render(ago)
+	if selected {
+		// For selected rows, build plain padded text and let the row style
+		// apply background uniformly — no per-column styling that creates gaps.
+		row := fmt.Sprintf("▌%s %s %s %s %s",
+			icon,
+			padRight(reason, reasonW),
+			padRight(repo, repoW),
+			padRight(title, titleWidth),
+			padLeft(ago, agoW),
+		)
+		return lipgloss.NewStyle().
+			Width(width).MaxWidth(width).
+			Background(theme.ColorSurface2).
+			Foreground(theme.ColorText).
+			Bold(true).
+			Render(row)
+	}
 
-	row := fmt.Sprintf(" %s %s %s %s %s", icon, reasonStyled, repoStyled, titleStyled, agoStyled)
+	// Non-selected rows use per-column colors
+	reasonStyle := lipgloss.NewStyle().Foreground(theme.ReasonColor).Width(reasonW).MaxWidth(reasonW)
+	repoStyle := lipgloss.NewStyle().Foreground(theme.RepoColor).Width(repoW).MaxWidth(repoW)
+	titleStyle := lipgloss.NewStyle().Foreground(theme.ColorText).Width(titleWidth).MaxWidth(titleWidth)
+	agoStyle := lipgloss.NewStyle().Foreground(theme.TimeColor).Width(agoW).MaxWidth(agoW).Align(lipgloss.Right)
+
+	if !n.Unread {
+		reasonStyle = reasonStyle.Foreground(theme.Dimmed)
+		repoStyle = repoStyle.Foreground(theme.Dimmed)
+		titleStyle = titleStyle.Foreground(theme.Dimmed)
+		agoStyle = agoStyle.Foreground(theme.Dimmed)
+	}
+
+	row := fmt.Sprintf(" %s %s %s %s %s",
+		icon,
+		reasonStyle.Render(reason),
+		repoStyle.Render(repo),
+		titleStyle.Render(title),
+		agoStyle.Render(ago),
+	)
 
 	style := lipgloss.NewStyle().Width(width).MaxWidth(width)
-	if selected {
-		style = style.Background(theme.ColorSurface0).Foreground(theme.ColorText).Bold(true)
-	} else if !n.Unread {
+	if !n.Unread {
 		style = style.Foreground(theme.Dimmed)
 	} else {
 		style = style.Foreground(theme.ColorText)
@@ -609,7 +639,6 @@ func (a App) renderNotificationRowSized(n github.Notification, selected bool, wi
 
 	return style.Render(row)
 }
-
 func (a App) renderNotificationList(notifications []github.Notification, height int) string {
 	a.clampScroll()
 	end := a.offset + height
@@ -646,17 +675,44 @@ func (a App) renderNotificationRow(n github.Notification, selected bool) string 
 	}
 	title := truncate(n.Subject.Title, titleWidth)
 
-	reasonStyled := lipgloss.NewStyle().Foreground(theme.ReasonColor).Width(reasonW).MaxWidth(reasonW).Render(reason)
-	repoStyled := lipgloss.NewStyle().Foreground(theme.RepoColor).Width(repoW).MaxWidth(repoW).Render(repo)
-	titleStyled := lipgloss.NewStyle().Foreground(theme.ColorText).Width(titleWidth).MaxWidth(titleWidth).Render(title)
-	agoStyled := lipgloss.NewStyle().Foreground(theme.TimeColor).Width(agoW).MaxWidth(agoW).Align(lipgloss.Right).Render(ago)
+	if selected {
+		row := fmt.Sprintf("▌%s %s %s %s %s",
+			icon,
+			padRight(reason, reasonW),
+			padRight(repo, repoW),
+			padRight(title, titleWidth),
+			padLeft(ago, agoW),
+		)
+		return lipgloss.NewStyle().
+			Width(a.width).MaxWidth(a.width).
+			Background(theme.ColorSurface2).
+			Foreground(theme.ColorText).
+			Bold(true).
+			Render(row)
+	}
 
-	row := fmt.Sprintf(" %s %s %s %s %s", icon, reasonStyled, repoStyled, titleStyled, agoStyled)
+	reasonStyle := lipgloss.NewStyle().Foreground(theme.ReasonColor).Width(reasonW).MaxWidth(reasonW)
+	repoStyle := lipgloss.NewStyle().Foreground(theme.RepoColor).Width(repoW).MaxWidth(repoW)
+	titleStyle := lipgloss.NewStyle().Foreground(theme.ColorText).Width(titleWidth).MaxWidth(titleWidth)
+	agoStyle := lipgloss.NewStyle().Foreground(theme.TimeColor).Width(agoW).MaxWidth(agoW).Align(lipgloss.Right)
+
+	if !n.Unread {
+		reasonStyle = reasonStyle.Foreground(theme.Dimmed)
+		repoStyle = repoStyle.Foreground(theme.Dimmed)
+		titleStyle = titleStyle.Foreground(theme.Dimmed)
+		agoStyle = agoStyle.Foreground(theme.Dimmed)
+	}
+
+	row := fmt.Sprintf(" %s %s %s %s %s",
+		icon,
+		reasonStyle.Render(reason),
+		repoStyle.Render(repo),
+		titleStyle.Render(title),
+		agoStyle.Render(ago),
+	)
 
 	style := lipgloss.NewStyle().Width(a.width).MaxWidth(a.width)
-	if selected {
-		style = style.Background(theme.ColorSurface0).Foreground(theme.ColorText).Bold(true)
-	} else if !n.Unread {
+	if !n.Unread {
 		style = style.Foreground(theme.Dimmed)
 	} else {
 		style = style.Foreground(theme.ColorText)
@@ -929,6 +985,15 @@ func padRight(s string, w int) string {
 		return s
 	}
 	return s + strings.Repeat(" ", w-len(r))
+}
+
+// padLeft pads s with leading spaces to the given width.
+func padLeft(s string, w int) string {
+	r := []rune(s)
+	if len(r) >= w {
+		return s
+	}
+	return strings.Repeat(" ", w-len(r)) + s
 }
 
 func truncate(s string, max int) string {
