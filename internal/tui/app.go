@@ -252,25 +252,31 @@ func (a App) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 func (a App) handleFilterInput(key string) (tea.Model, tea.Cmd) {
 	switch key {
 	case "enter":
-		a.repoFilter = a.filterBuf
+		// Confirm filter and exit filter mode
+		a.filterInput = filterNone
+		return a, nil
+	case "escape", "esc":
+		// Cancel: clear filter and exit
+		a.repoFilter = ""
+		a.filterBuf = ""
 		a.filterInput = filterNone
 		a.cursor = 0
 		a.offset = 0
-		return a, nil
-	case "escape", "esc":
-		a.filterInput = filterNone
 		return a, nil
 	case "backspace":
 		if len(a.filterBuf) > 0 {
 			a.filterBuf = a.filterBuf[:len(a.filterBuf)-1]
 		}
-		return a, nil
 	default:
 		if len(key) == 1 {
 			a.filterBuf += key
 		}
-		return a, nil
 	}
+	// Live filter: apply as user types
+	a.repoFilter = a.filterBuf
+	a.cursor = 0
+	a.offset = 0
+	return a, nil
 }
 
 func (a App) handlePreviewKey(key string) (tea.Model, tea.Cmd) {
