@@ -1,7 +1,9 @@
 package tui
 
 import (
+	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -48,6 +50,13 @@ func fetchNotificationsCmd(client *github.Client, view github.View) tea.Cmd {
 			lastErr = err
 		}
 		log.Printf("fetch notifications: all %d attempts failed: %v", maxRetries, lastErr)
+		// If we're getting 502/504 errors, suggest using a classic PAT
+		errStr := lastErr.Error()
+		if strings.Contains(errStr, "502") || strings.Contains(errStr, "504") {
+			return errorMsg{err: fmt.Errorf(
+				"%w — GitHub's notification API may not work with OAuth tokens. "+
+					"Try: GH_BELL_TOKEN=ghp_your_classic_pat gh bell", lastErr)}
+		}
 		return errorMsg{err: lastErr}
 	}
 }

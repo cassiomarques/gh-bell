@@ -36,6 +36,11 @@ func main() {
 	}
 
 	log.Println("creating GitHub API client")
+	if os.Getenv("GH_BELL_TOKEN") != "" {
+		log.Println("using GH_BELL_TOKEN (classic PAT)")
+	} else {
+		log.Println("using default gh auth token")
+	}
 	client, err := github.NewClient()
 	if err != nil {
 		log.Printf("client creation failed: %v", err)

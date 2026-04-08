@@ -1,6 +1,6 @@
 # gh-bell 🔔
 
-A terminal UI for managing GitHub notifications. Built as a `gh` CLI extension — no PAT needed.
+A terminal UI for managing GitHub notifications. Built as a `gh` CLI extension.
 
 ![Go](https://img.shields.io/badge/Go-1.25-blue)
 
@@ -15,6 +15,22 @@ gh extension install cassiomarques/gh-bell
 ```bash
 gh bell
 ```
+
+### Authentication
+
+By default, gh-bell inherits authentication from `gh auth login` via the [go-gh](https://github.com/cli/go-gh) library.
+
+If you encounter persistent 502/504 errors from the Notifications API (a known issue with some OAuth tokens), use a [classic GitHub PAT](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens#creating-a-personal-access-token-classic) with `notifications` and `repo` scopes:
+
+```bash
+# Set the token for a single run
+GH_BELL_TOKEN=ghp_your_token gh bell
+
+# Or export it in your shell profile
+export GH_BELL_TOKEN=ghp_your_token
+```
+
+Token resolution order: `GH_BELL_TOKEN` → `GH_TOKEN` → `GITHUB_TOKEN` → `gh auth login` keyring.
 
 ## Features
 

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/cli/go-gh/v2/pkg/api"
@@ -31,11 +32,23 @@ type Client struct {
 	rest *api.RESTClient
 }
 
-// NewClient creates a Client using the current gh auth session.
+// NewClient creates a Client. It checks GH_BELL_TOKEN first (for users who
+// prefer a classic PAT), then falls back to the default go-gh auth chain
+// (GH_TOKEN → GITHUB_TOKEN → gh auth login keyring).
 func NewClient() (*Client, error) {
-	rest, err := api.DefaultRESTClient()
-	if err != nil {
-		return nil, fmt.Errorf("creating GitHub API client (is gh authenticated?): %w", err)
+	var rest *api.RESTClient
+	var err error
+
+	if token := os.Getenv("GH_BELL_TOKEN"); token != "" {
+		rest, err = api.NewRESTClient(api.ClientOptions{AuthToken: token})
+		if err != nil {
+			return nil, fmt.Errorf("creating client with GH_BELL_TOKEN: %w", err)
+		}
+	} else {
+		rest, err = api.DefaultRESTClient()
+		if err != nil {
+			return nil, fmt.Errorf("creating GitHub API client (is gh authenticated?): %w", err)
+		}
 	}
 	return &Client{rest: rest}, nil
 }
