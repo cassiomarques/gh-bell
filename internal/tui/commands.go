@@ -23,18 +23,27 @@ import (
 //   5. Update receives threadMarkedReadMsg, removes the item from the list
 
 const defaultRefreshInterval = 60 * time.Second
+const maxRetries = 3
 
 // fetchNotificationsCmd returns a Cmd that fetches notifications from the API.
+// Retries up to maxRetries times on transient errors (5xx) with backoff.
 func fetchNotificationsCmd(client *github.Client, view github.View) tea.Cmd {
 	return func() tea.Msg {
-		notifications, err := client.ListNotifications(github.ListOptions{
-			View:    view,
-			PerPage: 50,
-		})
-		if err != nil {
-			return errorMsg{err: err}
+		var lastErr error
+		for attempt := range maxRetries {
+			if attempt > 0 {
+				time.Sleep(time.Duration(attempt) * 2 * time.Second)
+			}
+			notifications, err := client.ListNotifications(github.ListOptions{
+				View:    view,
+				PerPage: 50,
+			})
+			if err == nil {
+				return notificationsLoadedMsg{notifications: notifications}
+			}
+			lastErr = err
 		}
-		return notificationsLoadedMsg{notifications: notifications}
+		return errorMsg{err: lastErr}
 	}
 }
 

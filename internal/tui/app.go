@@ -118,9 +118,10 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case errorMsg:
 		a.loading = false
-		a.statusText = fmt.Sprintf("Error: %v", msg.err)
+		a.statusText = fmt.Sprintf("Error: %v  (press ctrl+r to retry)", msg.err)
 		a.statusError = true
-		return a, clearStatusCmd()
+		// Don't auto-clear errors — keep visible until next action or manual clear
+		return a, nil
 
 	case threadMarkedReadMsg:
 		a.removeNotification(msg.threadID)
@@ -193,6 +194,11 @@ func (a App) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "?":
 		a.showHelp = !a.showHelp
 		return a, nil
+	case "ctrl+r":
+		a.loading = true
+		a.statusText = ""
+		a.statusError = false
+		return a, fetchNotificationsCmd(a.client, a.currentView)
 	case "1":
 		return a.switchView(github.ViewUnread)
 	case "2":
@@ -381,7 +387,11 @@ func (a App) View() tea.View {
 	} else {
 		filtered := a.filteredNotifications()
 		if len(filtered) == 0 {
-			b.WriteString(a.renderCentered("🔔 No notifications!", contentHeight))
+			if a.statusError {
+				b.WriteString(a.renderCentered("⚠ Failed to load notifications — press Ctrl+R to retry", contentHeight))
+			} else {
+				b.WriteString(a.renderCentered("🔔 No notifications!", contentHeight))
+			}
 		} else {
 			b.WriteString(a.renderMainContent(filtered, contentHeight))
 		}
@@ -656,7 +666,7 @@ func (a App) renderStatusBar() string {
 		left = lipgloss.NewStyle().Foreground(color).Render(a.statusText)
 	}
 
-	right := "q:quit  ?:help  r:read  m:mute  Enter:open"
+	right := "q:quit  ?:help  r:read  m:mute  Enter:open  ^R:refresh"
 	rightStyled := lipgloss.NewStyle().Foreground(theme.Dimmed).Render(right)
 
 	gap := a.width - lipgloss.Width(left) - lipgloss.Width(rightStyled)
@@ -825,6 +835,7 @@ func (a App) renderHelpOverlay() string {
 		{"Tab", "Switch focus (list ↔ preview)"},
 		{"", ""},
 		{"?", "Toggle this help"},
+		{"Ctrl+R", "Refresh notifications"},
 		{"q", "Quit"},
 	}
 
