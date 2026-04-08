@@ -50,6 +50,7 @@ type App struct {
 	loading     bool
 	statusText  string
 	statusError bool
+	showHelp    bool
 
 	// Filters
 	repoFilter   string
@@ -177,12 +178,20 @@ func (a App) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return a.handleFilterInput(key)
 	}
 
+	// Help overlay intercepts most keys
+	if a.showHelp {
+		if key == "?" || key == "escape" || key == "esc" || key == "q" {
+			a.showHelp = false
+		}
+		return a, nil
+	}
+
 	// Global keys (work regardless of focus)
 	switch key {
 	case "q", "ctrl+c":
 		return a, tea.Quit
 	case "?":
-		// TODO: help overlay
+		a.showHelp = !a.showHelp
 		return a, nil
 	case "1":
 		return a.switchView(github.ViewUnread)
@@ -347,6 +356,12 @@ func (a App) View() tea.View {
 		return tea.NewView("Loading...")
 	}
 
+	if a.showHelp {
+		v := tea.NewView(a.renderHelpOverlay())
+		v.AltScreen = true
+		return v
+	}
+
 	var b strings.Builder
 
 	// Header: view tabs
@@ -362,7 +377,7 @@ func (a App) View() tea.View {
 	// Main content area
 	contentHeight := a.contentHeight()
 	if a.loading && len(a.notifications) == 0 {
-		b.WriteString(a.renderCentered("Loading notifications...", contentHeight))
+		b.WriteString(a.renderCentered("⟳ Loading notifications...", contentHeight))
 	} else {
 		filtered := a.filteredNotifications()
 		if len(filtered) == 0 {
@@ -780,6 +795,59 @@ func (a App) contentHeight() int {
 }
 
 // --- Utilities ---
+
+func (a App) renderHelpOverlay() string {
+	title := lipgloss.NewStyle().
+		Foreground(theme.ColorMauve).
+		Bold(true).
+		Render("  gh-bell 🔔  Keybindings")
+
+	dim := lipgloss.NewStyle().Foreground(theme.Dimmed)
+	key := lipgloss.NewStyle().Foreground(theme.ColorText).Bold(true).Width(14)
+	desc := lipgloss.NewStyle().Foreground(theme.ColorSubtext1)
+
+	bindings := []struct{ k, d string }{
+		{"j / ↓", "Move down"},
+		{"k / ↑", "Move up"},
+		{"gg", "Jump to top"},
+		{"G", "Jump to bottom"},
+		{"", ""},
+		{"Enter", "Open in browser"},
+		{"r", "Mark as read"},
+		{"R", "Mark all as read"},
+		{"m", "Mute thread"},
+		{"u", "Unsubscribe"},
+		{"", ""},
+		{"1 / 2 / 3", "Switch view (Unread/All/Participating)"},
+		{"/", "Filter by repo"},
+		{"f", "Cycle reason filter"},
+		{"Esc", "Clear filters"},
+		{"Tab", "Switch focus (list ↔ preview)"},
+		{"", ""},
+		{"?", "Toggle this help"},
+		{"q", "Quit"},
+	}
+
+	var lines []string
+	lines = append(lines, "")
+	lines = append(lines, title)
+	lines = append(lines, dim.Render("  "+strings.Repeat("─", 42)))
+	lines = append(lines, "")
+
+	for _, b := range bindings {
+		if b.k == "" {
+			lines = append(lines, "")
+			continue
+		}
+		lines = append(lines, "  "+key.Render(b.k)+desc.Render(b.d))
+	}
+
+	lines = append(lines, "")
+	lines = append(lines, dim.Render("  Press ? or Esc to close"))
+
+	content := strings.Join(lines, "\n")
+	return lipgloss.Place(a.width, a.height, lipgloss.Center, lipgloss.Center, content)
+}
 
 func truncate(s string, max int) string {
 	if len(s) <= max {
