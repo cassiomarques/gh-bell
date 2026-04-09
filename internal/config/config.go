@@ -1,0 +1,107 @@
+package config
+
+import (
+	"fmt"
+	"log"
+	"os"
+	"path/filepath"
+	"strconv"
+
+	"gopkg.in/yaml.v3"
+)
+
+const defaultConfigTemplate = `# gh-bell configuration
+# See https://github.com/cassiomarques/gh-bell for documentation.
+
+# GitHub classic Personal Access Token (required).
+# Create one at https://github.com/settings/tokens/new
+# with 'notifications' and 'repo' scopes.
+token: ""
+
+# Auto-refresh interval in seconds (default: 60).
+# refresh_interval: 60
+`
+
+// Config holds all gh-bell configuration.
+type Config struct {
+	Token           string `yaml:"token"`
+	RefreshInterval int    `yaml:"refresh_interval,omitempty"`
+}
+
+// Dir returns the gh-bell data/config directory (~/.gh-bell/).
+func Dir() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("determining home directory: %w", err)
+	}
+	return filepath.Join(home, ".gh-bell"), nil
+}
+
+// Path returns the full path to the config file.
+func Path() (string, error) {
+	dir, err := Dir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "config.yaml"), nil
+}
+
+// Load reads configuration from ~/.gh-bell/config.yaml, then overlays
+// environment variables. Env vars always take precedence over the file.
+// If the config file doesn't exist, it creates one with commented defaults.
+func Load() (*Config, error) {
+	cfg := &Config{}
+
+	cfgPath, err := Path()
+	if err != nil {
+		return cfg, err
+	}
+
+	data, err := os.ReadFile(cfgPath)
+	if os.IsNotExist(err) {
+		if writeErr := createDefault(cfgPath); writeErr != nil {
+			log.Printf("warning: could not create default config at %s: %v", cfgPath, writeErr)
+		}
+	} else if err != nil {
+		return cfg, fmt.Errorf("reading config file: %w", err)
+	} else {
+		if parseErr := parseConfig(data, cfg); parseErr != nil {
+			return cfg, parseErr
+		}
+	}
+
+	applyEnvOverrides(cfg)
+	return cfg, nil
+}
+
+// parseConfig unmarshals YAML data into the Config struct.
+func parseConfig(data []byte, cfg *Config) error {
+	if err := yaml.Unmarshal(data, cfg); err != nil {
+		return fmt.Errorf("parsing config file: %w", err)
+	}
+	return nil
+}
+
+// applyEnvOverrides overlays environment variable values onto a Config.
+// Env vars always take precedence over file values.
+func applyEnvOverrides(cfg *Config) {
+	if token := os.Getenv("GH_BELL_TOKEN"); token != "" {
+		cfg.Token = token
+	}
+	if s := os.Getenv("GH_BELL_REFRESH"); s != "" {
+		if secs, err := strconv.Atoi(s); err == nil && secs > 0 {
+			cfg.RefreshInterval = secs
+		} else {
+			log.Printf("ignoring invalid GH_BELL_REFRESH=%q", s)
+		}
+	}
+}
+
+// createDefault writes a config file with commented-out defaults.
+func createDefault(path string) error {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(path, []byte(defaultConfigTemplate), 0o600)
+}
