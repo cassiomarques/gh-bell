@@ -1149,10 +1149,17 @@ t.Error("pressing 'enter' in preview pane should trigger browser open command")
 a3 := newTestApp()
 a3.focused = focusPreview
 a3.previewScroll = 0
+a3.height = 10 // small height so content overflows
+a3.detailCache = make(map[string]*github.ThreadDetail)
+a3.detailCache["1"] = &github.ThreadDetail{
+	State: "open",
+	User:  github.User{Login: "author"},
+	Body:  "Line1\n\nLine2\n\nLine3\n\nLine4\n\nLine5\n\nLine6\n\nLine7\n\nLine8\n\nLine9\n\nLine10",
+}
 result3, _ := a3.handlePreviewKey("j")
 updated3 := result3.(App)
 if updated3.previewScroll != 1 {
-t.Error("'j' in preview pane should scroll preview, not navigate list")
+	t.Error("'j' in preview pane should scroll preview, not navigate list")
 }
 
 _ = initialCount
@@ -1161,7 +1168,6 @@ _ = initialCount
 func TestStatusBar_ShowsTotalCount(t *testing.T) {
 	a := newTestApp()
 	bar := a.renderStatusBar()
-	// Should show total count (4 notifications, no filters active)
 	if !strings.Contains(bar, "4") {
 		t.Errorf("status bar should show total count of 4, got: %q", bar)
 	}
@@ -1171,9 +1177,25 @@ func TestStatusBar_ShowsFilteredCount(t *testing.T) {
 	a := newTestApp()
 	a.repoFilter = "org/app"
 	bar := a.renderStatusBar()
-	// With filter active, should show filtered/total format
 	if !strings.Contains(bar, "1/4") {
 		t.Errorf("status bar should show 1/4 when filtered, got: %q", bar)
+	}
+}
+
+func TestTabs_ShowsFilteredCount(t *testing.T) {
+	a := newTestApp()
+
+	// No filters — should show "4 items"
+	tabs := a.renderTabs()
+	if !strings.Contains(tabs, "4 items") {
+		t.Errorf("tabs should show '4 items' without filter, got: %q", tabs)
+	}
+
+	// With filter — should show "1/4 items"
+	a.repoFilter = "org/app"
+	tabs = a.renderTabs()
+	if !strings.Contains(tabs, "1/4 items") {
+		t.Errorf("tabs should show '1/4 items' with filter, got: %q", tabs)
 	}
 }
 
@@ -1242,8 +1264,24 @@ func TestPreviewPane_G_JumpsToBottom(t *testing.T) {
 
 	result, _ := a.handlePreviewKey("G")
 	a = result.(App)
-	if a.previewScroll == 0 {
-		t.Error("G should set scroll to a large value for jump-to-bottom")
+	// Should equal the exact max scroll (not some arbitrary large number)
+	expected := a.previewMaxScroll()
+	if a.previewScroll != expected {
+		t.Errorf("G scroll=%d, want previewMaxScroll=%d", a.previewScroll, expected)
+	}
+}
+
+func TestPreviewPane_J_CapsScroll(t *testing.T) {
+	a := newTestApp()
+	a.focused = focusPreview
+	// Set scroll at the max
+	a.previewScroll = a.previewMaxScroll()
+
+	result, _ := a.handlePreviewKey("j")
+	a = result.(App)
+	// Should not exceed max
+	if a.previewScroll > a.previewMaxScroll() {
+		t.Error("j should not scroll past the max")
 	}
 }
 

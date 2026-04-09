@@ -32,19 +32,30 @@ export GH_BELL_TOKEN=ghp_your_token
 
 Token resolution order: `GH_BELL_TOKEN` → `GH_TOKEN` → `GITHUB_TOKEN` → `gh auth login` keyring.
 
+### Configuration
+
+| Environment variable | Description | Default |
+|---------------------|-------------|---------|
+| `GH_BELL_TOKEN` | Classic PAT for authentication | (use `gh auth login`) |
+| `GH_BELL_REFRESH` | Auto-refresh interval in seconds | `60` |
+
 ## Features
 
-- **Vim-style navigation** — `j`/`k`, `gg`, `G`
+- **Vim-style navigation** — `j`/`k`, `gg`/`G` in both list and preview pane
 - **Three views** — Unread (`1`), All (`2`), Participating (`3`)
-- **Filter by repo** — press `/`, type to search, `Enter` to apply
-- **Filter by reason** — press `f` to cycle (review, mention, assign, etc.)
+- **Rich filtering** — repo (`/`), title search (`s`), reason (`f`), type (`t`), org (`o`), age (`a`), participating (`p`) — all combinable
 - **Actions** — `r` mark read, `R` mark all, `m` mute, `u` unsubscribe
-- **Open in browser** — `Enter` opens the notification in your default browser
-- **Preview pane** — shows notification details alongside the list
-- **Auto-refresh** — polls for new notifications every 60 seconds
-- **Catppuccin theme** — beautiful terminal colors out of the box
+- **Open in browser** — `Enter` opens the notification and marks it as read
+- **Preview pane** — shows notification details with markdown rendering (via [glamour](https://github.com/charmbracelet/glamour))
+- **New notification indicators** — `•` prefix and green tint for items that appeared since last refresh
+- **Color-coded reasons** — each notification reason (review, mention, assign, etc.) has a distinct color
+- **Auto-refresh** — configurable polling interval (default 60s, set `GH_BELL_REFRESH`)
+- **Notification count** — status bar shows filtered/total count
+- **Catppuccin Mocha theme** — beautiful terminal colors out of the box
 
 ## Keybindings
+
+### Navigation
 
 | Key | Action |
 |-----|--------|
@@ -52,18 +63,41 @@ Token resolution order: `GH_BELL_TOKEN` → `GH_TOKEN` → `GITHUB_TOKEN` → `g
 | `k` / `↑` | Move up |
 | `gg` | Jump to top |
 | `G` | Jump to bottom |
-| `Enter` | Open in browser |
+| `Tab` | Switch focus (list ↔ preview) |
+
+### Actions
+
+| Key | Action |
+|-----|--------|
+| `Enter` | Open in browser (also marks as read) |
 | `r` | Mark as read |
 | `R` | Mark all as read |
 | `m` | Mute thread |
 | `u` | Unsubscribe |
-| `1` / `2` / `3` | Switch view |
-| `/` | Filter by repo |
+
+### Filters & Views
+
+| Key | Action |
+|-----|--------|
+| `1` / `2` / `3` | Unread / All / Participating view |
+| `/` | Filter by repo (live search) |
+| `s` | Search titles (live search) |
 | `f` | Cycle reason filter |
-| `Esc` | Clear filters |
-| `Tab` | Switch focus (list ↔ preview) |
-| `?` | Help |
+| `t` | Cycle type filter (Issue, PR, Release, etc.) |
+| `o` | Cycle org/owner filter |
+| `a` | Cycle age filter (24h, 7d, 30d) |
+| `p` | Toggle participating-only |
+| `Esc` | Clear all filters |
+
+### General
+
+| Key | Action |
+|-----|--------|
+| `Ctrl+R` | Refresh notifications |
+| `?` | Toggle help overlay |
 | `q` | Quit |
+
+> All action keys (`r`, `m`, `u`, `Enter`) work from both the list and preview panes.
 
 ## How It Works
 

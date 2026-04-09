@@ -449,7 +449,10 @@ func (a App) handleFilterInput(key string) (tea.Model, tea.Cmd) {
 func (a App) handlePreviewKey(key string) (tea.Model, tea.Cmd) {
 	switch key {
 	case "j", "down":
-		a.previewScroll++
+		maxScroll := a.previewMaxScroll()
+		if a.previewScroll < maxScroll {
+			a.previewScroll++
+		}
 		return a, nil
 	case "k", "up":
 		if a.previewScroll > 0 {
@@ -468,8 +471,7 @@ func (a App) handlePreviewKey(key string) (tea.Model, tea.Cmd) {
 		a.lastKeyTime = now
 		return a, nil
 	case "G":
-		// Jump to bottom of preview (set scroll high — renderPreview clamps)
-		a.previewScroll = 9999
+		a.previewScroll = a.previewMaxScroll()
 		return a, nil
 	}
 	// Actions (r, m, u, enter, etc.) work from the preview pane too —
@@ -662,10 +664,17 @@ func (a App) renderTabs() string {
 		tabs = append(tabs, style.Render(label))
 	}
 
-	count := len(a.filteredNotifications())
+	filtered := len(a.filteredNotifications())
+	total := len(a.notifications)
+	var countText string
+	if a.hasActiveFilters() {
+		countText = fmt.Sprintf("  %d/%d items", filtered, total)
+	} else {
+		countText = fmt.Sprintf("  %d items", total)
+	}
 	counter := lipgloss.NewStyle().
 		Foreground(theme.ColorOverlay1).
-		Render(fmt.Sprintf("  %d items", count))
+		Render(countText)
 
 	row := lipgloss.JoinHorizontal(lipgloss.Top, append(tabs, counter)...)
 	return lipgloss.NewStyle().Width(a.width).Render(row)
@@ -733,11 +742,12 @@ func (a App) renderMainContent(notifications []github.Notification, height int) 
 	return a.renderNotificationList(notifications, height)
 }
 
-func (a App) renderPreview(height, width int) string {
+// previewContentLines builds the raw content lines for the preview pane.
+// Extracted as a pure function so both key handlers and View can use it.
+func (a App) previewContentLines(width int) []string {
 	n := a.selectedNotification()
 	if n == nil {
-		msg := lipgloss.NewStyle().Foreground(theme.Dimmed).Render("No notification selected")
-		return lipgloss.Place(width, height, lipgloss.Center, lipgloss.Center, msg)
+		return nil
 	}
 
 	var lines []string
@@ -798,9 +808,42 @@ func (a App) renderPreview(height, width int) string {
 		lines = append(lines, hint)
 	}
 
-	// Apply scroll
-	if a.previewScroll > 0 && a.previewScroll < len(lines) {
-		lines = lines[a.previewScroll:]
+	return lines
+}
+
+// previewMaxScroll returns the maximum valid scroll offset for the preview pane.
+func (a App) previewMaxScroll() int {
+	previewWidth := a.width*4/10 - 1
+	if previewWidth < 20 {
+		previewWidth = 20
+	}
+	lines := a.previewContentLines(previewWidth)
+	height := a.contentHeight()
+	max := len(lines) - height
+	if max < 0 {
+		return 0
+	}
+	return max
+}
+
+func (a App) renderPreview(height, width int) string {
+	lines := a.previewContentLines(width)
+	if lines == nil {
+		msg := lipgloss.NewStyle().Foreground(theme.Dimmed).Render("No notification selected")
+		return lipgloss.Place(width, height, lipgloss.Center, lipgloss.Center, msg)
+	}
+
+	// Apply scroll (clamp to valid range)
+	maxScroll := len(lines) - height
+	if maxScroll < 0 {
+		maxScroll = 0
+	}
+	scroll := a.previewScroll
+	if scroll > maxScroll {
+		scroll = maxScroll
+	}
+	if scroll > 0 {
+		lines = lines[scroll:]
 	}
 
 	// Pad or trim to height
