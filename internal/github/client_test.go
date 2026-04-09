@@ -28,6 +28,27 @@ func TestIsAuthError(t *testing.T) {
 	}
 }
 
+func TestHasNextPage(t *testing.T) {
+	tests := []struct {
+		name   string
+		header string
+		want   bool
+	}{
+		{"empty", "", false},
+		{"next only", `<https://api.github.com/notifications?page=2>; rel="next"`, true},
+		{"next and last", `<https://api.github.com/notifications?page=2>; rel="next", <https://api.github.com/notifications?page=5>; rel="last"`, true},
+		{"prev and last only", `<https://api.github.com/notifications?page=1>; rel="prev", <https://api.github.com/notifications?page=5>; rel="last"`, false},
+		{"last only", `<https://api.github.com/notifications?page=5>; rel="last"`, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := hasNextPage(tt.header); got != tt.want {
+				t.Errorf("hasNextPage(%q) = %v, want %v", tt.header, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestIsServerError(t *testing.T) {
 	tests := []struct {
 		name string

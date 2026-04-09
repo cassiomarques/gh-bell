@@ -80,20 +80,20 @@ func (s *NotificationService) LoadCached(unreadOnly bool) ([]github.Notification
 // and returns the merged result. This is the primary "refresh from API" path.
 // It still works as a single-page fetch for backward compatibility with tests.
 func (s *NotificationService) Refresh(opts github.ListOptions) ([]github.Notification, error) {
-	notifications, err := s.client.ListNotifications(opts)
+	result, err := s.client.ListNotifications(opts)
 	if err != nil {
 		return nil, err
 	}
 
-	if len(notifications) > 0 {
-		if storeErr := s.store.UpsertNotifications(notifications); storeErr != nil {
+	if len(result.Notifications) > 0 {
+		if storeErr := s.store.UpsertNotifications(result.Notifications); storeErr != nil {
 			log.Printf("warning: failed to cache notifications: %v", storeErr)
 		}
 		// Index notification titles in Bleve for full-text search
-		s.indexNotifications(notifications)
+		s.indexNotifications(result.Notifications)
 	}
 
-	return notifications, nil
+	return result.Notifications, nil
 }
 
 // SmartRefresh decides between a full paginated sync (first time) and an
@@ -120,6 +120,8 @@ func (s *NotificationService) IsFullSyncDone() bool {
 }
 
 // refreshFull paginates through all API pages to build a complete local cache.
+// Uses the Link response header (rel="next") to detect more pages — the GitHub
+// notifications API can return fewer items than per_page even when more exist.
 func (s *NotificationService) refreshFull(view github.View) ([]github.Notification, error) {
 	log.Println("sync: starting full paginated fetch")
 	var total int
@@ -130,7 +132,7 @@ func (s *NotificationService) refreshFull(view github.View) ([]github.Notificati
 			PerPage: maxPerPage,
 			Page:    page,
 		}
-		batch, err := s.client.ListNotifications(opts)
+		result, err := s.client.ListNotifications(opts)
 		if err != nil {
 			if total > 0 {
 				// Partial success — return what we have from cache
@@ -140,17 +142,16 @@ func (s *NotificationService) refreshFull(view github.View) ([]github.Notificati
 			return nil, err
 		}
 
-		if len(batch) > 0 {
-			if storeErr := s.store.UpsertNotifications(batch); storeErr != nil {
+		if len(result.Notifications) > 0 {
+			if storeErr := s.store.UpsertNotifications(result.Notifications); storeErr != nil {
 				log.Printf("warning: failed to cache page %d: %v", page, storeErr)
 			}
-			s.indexNotifications(batch)
-			total += len(batch)
-			log.Printf("sync: page %d fetched %d notifications (total: %d)", page, len(batch), total)
+			s.indexNotifications(result.Notifications)
+			total += len(result.Notifications)
+			log.Printf("sync: page %d fetched %d notifications (total: %d)", page, len(result.Notifications), total)
 		}
 
-		// If we got fewer than requested, we've reached the last page
-		if len(batch) < maxPerPage {
+		if !result.HasNextPage {
 			break
 		}
 		page++
@@ -190,7 +191,7 @@ func (s *NotificationService) refreshIncremental(view github.View) ([]github.Not
 			Page:    page,
 			Since:   since,
 		}
-		batch, err := s.client.ListNotifications(opts)
+		result, err := s.client.ListNotifications(opts)
 		if err != nil {
 			if total > 0 {
 				log.Printf("sync: incremental error on page %d after %d: %v", page, total, err)
@@ -199,15 +200,15 @@ func (s *NotificationService) refreshIncremental(view github.View) ([]github.Not
 			return nil, err
 		}
 
-		if len(batch) > 0 {
-			if storeErr := s.store.UpsertNotifications(batch); storeErr != nil {
+		if len(result.Notifications) > 0 {
+			if storeErr := s.store.UpsertNotifications(result.Notifications); storeErr != nil {
 				log.Printf("warning: failed to cache incremental page %d: %v", page, storeErr)
 			}
-			s.indexNotifications(batch)
-			total += len(batch)
+			s.indexNotifications(result.Notifications)
+			total += len(result.Notifications)
 		}
 
-		if len(batch) < maxPerPage {
+		if !result.HasNextPage {
 			break
 		}
 		page++

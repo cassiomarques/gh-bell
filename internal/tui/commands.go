@@ -58,10 +58,12 @@ func fetchNotificationsCmd(client github.NotificationAPI, svc *service.Notificat
 			if svc != nil {
 				notifications, err = svc.SmartRefresh(view)
 			} else if client != nil {
-				notifications, err = client.ListNotifications(github.ListOptions{
+				result, listErr := client.ListNotifications(github.ListOptions{
 					View:    view,
 					PerPage: 50,
 				})
+				notifications = result.Notifications
+				err = listErr
 			} else {
 				return errorMsg{err: fmt.Errorf("no client or service configured")}
 			}

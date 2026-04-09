@@ -265,23 +265,29 @@ func TestClose_NilStore(t *testing.T) {
 // --- Pagination / Incremental Sync Tests ---
 
 // paginatingFake implements NotificationAPI and returns different results
-// per page, simulating the GitHub API pagination behavior.
+// per page, simulating the GitHub API pagination behavior including the
+// Link header's HasNextPage signal.
 type paginatingFake struct {
 	github.FakeClient
-	pages        map[int][]github.Notification // page -> notifications
-	callLog      []github.ListOptions          // recorded calls
+	pages   map[int][]github.Notification // page -> notifications
+	callLog []github.ListOptions          // recorded calls
 }
 
-func (f *paginatingFake) ListNotifications(opts github.ListOptions) ([]github.Notification, error) {
+func (f *paginatingFake) ListNotifications(opts github.ListOptions) (github.ListResult, error) {
 	f.callLog = append(f.callLog, opts)
 	if f.FakeClient.ListErr != nil {
-		return nil, f.FakeClient.ListErr
+		return github.ListResult{}, f.FakeClient.ListErr
 	}
 	page := opts.Page
 	if page == 0 {
 		page = 1
 	}
-	return f.pages[page], nil
+	notifications := f.pages[page]
+	_, nextExists := f.pages[page+1]
+	return github.ListResult{
+		Notifications: notifications,
+		HasNextPage:   nextExists,
+	}, nil
 }
 
 func makeNotification(id string, updatedAt time.Time) github.Notification {

@@ -22,11 +22,11 @@ type FakeClient struct {
 
 var _ NotificationAPI = (*FakeClient)(nil)
 
-func (f *FakeClient) ListNotifications(_ ListOptions) ([]Notification, error) {
+func (f *FakeClient) ListNotifications(_ ListOptions) (ListResult, error) {
 	if f.ListErr != nil {
-		return nil, f.ListErr
+		return ListResult{}, f.ListErr
 	}
-	return f.Notifications, nil
+	return ListResult{Notifications: f.Notifications}, nil
 }
 
 func (f *FakeClient) MarkThreadRead(threadID string) error {

@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"strings"
 	"time"
 
@@ -13,13 +15,20 @@ import (
 // NotificationAPI defines the interface for GitHub notification operations.
 // The concrete Client implements this; tests can substitute a FakeClient.
 type NotificationAPI interface {
-	ListNotifications(opts ListOptions) ([]Notification, error)
+	ListNotifications(opts ListOptions) (ListResult, error)
 	MarkThreadRead(threadID string) error
 	MarkAllRead(upTo *time.Time) error
 	MuteThread(threadID string) error
 	UnsubscribeThread(threadID string) error
 	FetchThreadDetail(subjectURL, commentURL string) (*ThreadDetail, error)
 	GetCurrentUser() (string, error)
+}
+
+// ListResult holds the notifications returned by a single API page along with
+// pagination metadata parsed from the Link response header.
+type ListResult struct {
+	Notifications []Notification
+	HasNextPage   bool
 }
 
 // IsAuthError returns true if the error indicates an authentication failure
@@ -86,7 +95,10 @@ func NewClient(token string) (*Client, error) {
 }
 
 // ListNotifications fetches notifications according to the given options.
-func (c *Client) ListNotifications(opts ListOptions) ([]Notification, error) {
+// It uses Request() instead of Get() to access the Link response header for
+// reliable pagination — the GitHub API can return fewer items than per_page
+// even when more pages exist.
+func (c *Client) ListNotifications(opts ListOptions) (ListResult, error) {
 	perPage := opts.PerPage
 	if perPage <= 0 {
 		perPage = 50
@@ -109,12 +121,42 @@ func (c *Client) ListNotifications(opts ListOptions) ([]Notification, error) {
 		endpoint += "&since=" + opts.Since.Format(time.RFC3339)
 	}
 
-	var notifications []Notification
-	err := c.rest.Get(endpoint, &notifications)
+	resp, err := c.rest.Request(http.MethodGet, endpoint, nil)
 	if err != nil {
-		return nil, fmt.Errorf("fetching notifications: %w", err)
+		return ListResult{}, fmt.Errorf("fetching notifications: %w", err)
 	}
-	return notifications, nil
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return ListResult{}, fmt.Errorf("reading notification response: %w", err)
+	}
+
+	var notifications []Notification
+	if err := json.Unmarshal(body, &notifications); err != nil {
+		return ListResult{}, fmt.Errorf("decoding notifications: %w", err)
+	}
+
+	hasNext := hasNextPage(resp.Header.Get("Link"))
+
+	return ListResult{
+		Notifications: notifications,
+		HasNextPage:   hasNext,
+	}, nil
+}
+
+// hasNextPage parses the Link header to check for a rel="next" link.
+// Example: <https://api.github.com/...?page=2>; rel="next", <...>; rel="last"
+func hasNextPage(linkHeader string) bool {
+	if linkHeader == "" {
+		return false
+	}
+	for _, part := range strings.Split(linkHeader, ",") {
+		if strings.Contains(part, `rel="next"`) {
+			return true
+		}
+	}
+	return false
 }
 
 // MarkThreadRead marks a single notification thread as read.
