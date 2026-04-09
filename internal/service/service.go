@@ -65,6 +65,11 @@ func (s *NotificationService) Store() *storage.Store {
 
 // --- Notification List ---
 
+const (
+	maxPerPage     = 100 // GitHub API maximum
+	fullSyncPref   = "full_sync_done"
+)
+
 // LoadCached returns notifications from the local SQLite cache for instant
 // startup. If unreadOnly is true, only unread notifications are returned.
 func (s *NotificationService) LoadCached(unreadOnly bool) ([]github.Notification, error) {
@@ -73,6 +78,7 @@ func (s *NotificationService) LoadCached(unreadOnly bool) ([]github.Notification
 
 // Refresh fetches notifications from the GitHub API, stores them in SQLite,
 // and returns the merged result. This is the primary "refresh from API" path.
+// It still works as a single-page fetch for backward compatibility with tests.
 func (s *NotificationService) Refresh(opts github.ListOptions) ([]github.Notification, error) {
 	notifications, err := s.client.ListNotifications(opts)
 	if err != nil {
@@ -88,6 +94,132 @@ func (s *NotificationService) Refresh(opts github.ListOptions) ([]github.Notific
 	}
 
 	return notifications, nil
+}
+
+// SmartRefresh decides between a full paginated sync (first time) and an
+// incremental sync (using the `since` parameter) for subsequent refreshes.
+// After syncing with the API, it returns all notifications from the local cache.
+func (s *NotificationService) SmartRefresh(view github.View) ([]github.Notification, error) {
+	if s.IsFullSyncDone() {
+		return s.refreshIncremental(view)
+	}
+	return s.refreshFull(view)
+}
+
+// ForceFullSync clears the full_sync_done flag and performs a full paginated
+// fetch from scratch. Used when the user wants to reload everything.
+func (s *NotificationService) ForceFullSync(view github.View) ([]github.Notification, error) {
+	s.store.DeletePref(fullSyncPref)
+	return s.refreshFull(view)
+}
+
+// IsFullSyncDone returns whether a full sync has been completed previously.
+func (s *NotificationService) IsFullSyncDone() bool {
+	v, _ := s.store.GetPref(fullSyncPref)
+	return v == "1"
+}
+
+// refreshFull paginates through all API pages to build a complete local cache.
+func (s *NotificationService) refreshFull(view github.View) ([]github.Notification, error) {
+	log.Println("sync: starting full paginated fetch")
+	var total int
+	page := 1
+	for {
+		opts := github.ListOptions{
+			View:    view,
+			PerPage: maxPerPage,
+			Page:    page,
+		}
+		batch, err := s.client.ListNotifications(opts)
+		if err != nil {
+			if total > 0 {
+				// Partial success — return what we have from cache
+				log.Printf("sync: error on page %d after fetching %d: %v", page, total, err)
+				break
+			}
+			return nil, err
+		}
+
+		if len(batch) > 0 {
+			if storeErr := s.store.UpsertNotifications(batch); storeErr != nil {
+				log.Printf("warning: failed to cache page %d: %v", page, storeErr)
+			}
+			s.indexNotifications(batch)
+			total += len(batch)
+			log.Printf("sync: page %d fetched %d notifications (total: %d)", page, len(batch), total)
+		}
+
+		// If we got fewer than requested, we've reached the last page
+		if len(batch) < maxPerPage {
+			break
+		}
+		page++
+	}
+
+	// Mark full sync as complete
+	if err := s.store.SetPref(fullSyncPref, "1"); err != nil {
+		log.Printf("warning: could not save full_sync_done pref: %v", err)
+	}
+	log.Printf("sync: full sync complete — %d notifications across %d pages", total, page)
+
+	// Return everything from the local cache (merged across all pages)
+	unreadOnly := view == github.ViewUnread
+	return s.store.ListNotifications(unreadOnly)
+}
+
+// refreshIncremental fetches only notifications updated since the latest
+// cached timestamp. Much faster than a full sync for periodic refreshes.
+func (s *NotificationService) refreshIncremental(view github.View) ([]github.Notification, error) {
+	since, err := s.store.LatestUpdatedAt()
+	if err != nil {
+		log.Printf("sync: could not get latest timestamp, falling back to full: %v", err)
+		return s.refreshFull(view)
+	}
+	if since == nil {
+		// No cached data — do a full sync
+		return s.refreshFull(view)
+	}
+
+	log.Printf("sync: incremental fetch since %s", since.Format("2006-01-02T15:04:05Z"))
+	var total int
+	page := 1
+	for {
+		opts := github.ListOptions{
+			View:    view,
+			PerPage: maxPerPage,
+			Page:    page,
+			Since:   since,
+		}
+		batch, err := s.client.ListNotifications(opts)
+		if err != nil {
+			if total > 0 {
+				log.Printf("sync: incremental error on page %d after %d: %v", page, total, err)
+				break
+			}
+			return nil, err
+		}
+
+		if len(batch) > 0 {
+			if storeErr := s.store.UpsertNotifications(batch); storeErr != nil {
+				log.Printf("warning: failed to cache incremental page %d: %v", page, storeErr)
+			}
+			s.indexNotifications(batch)
+			total += len(batch)
+		}
+
+		if len(batch) < maxPerPage {
+			break
+		}
+		page++
+	}
+
+	if total > 0 {
+		log.Printf("sync: incremental fetch got %d updated notifications", total)
+	}
+
+	// Return everything from the local cache
+	unreadOnly := view == github.ViewUnread
+	return s.store.ListNotifications(unreadOnly)
 }
 
 // --- Thread Details ---
