@@ -1519,7 +1519,7 @@ func (a App) renderStatusBar() string {
 	}
 	if a.loading {
 		frame := spinnerFrames[a.spinnerFrame%len(spinnerFrames)]
-		countStr += " " + frame
+		countStr += "  " + frame + " syncing…"
 	}
 	countStyled := lipgloss.NewStyle().Foreground(theme.ColorLavender).Bold(true).Render(countStr)
 
