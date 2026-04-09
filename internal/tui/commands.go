@@ -44,7 +44,7 @@ func authErrorMessage(err error) error {
 // When a service is provided, it also stores the results in SQLite.
 // Retries up to maxRetries times on transient server errors with backoff.
 // Auth errors (expired/invalid token) are returned immediately without retry.
-func fetchNotificationsCmd(client *github.Client, svc *service.NotificationService, view github.View) tea.Cmd {
+func fetchNotificationsCmd(client github.NotificationAPI, svc *service.NotificationService, view github.View) tea.Cmd {
 	return func() tea.Msg {
 		var lastErr error
 		for attempt := range maxRetries {
@@ -93,7 +93,7 @@ func fetchNotificationsCmd(client *github.Client, svc *service.NotificationServi
 }
 
 // markReadCmd returns a Cmd that marks a single thread as read.
-func markReadCmd(client *github.Client, svc *service.NotificationService, threadID string) tea.Cmd {
+func markReadCmd(client github.NotificationAPI, svc *service.NotificationService, threadID string) tea.Cmd {
 	return func() tea.Msg {
 		var err error
 		if svc != nil {
@@ -112,7 +112,7 @@ func markReadCmd(client *github.Client, svc *service.NotificationService, thread
 }
 
 // markAllReadCmd returns a Cmd that marks all notifications as read.
-func markAllReadCmd(client *github.Client, svc *service.NotificationService) tea.Cmd {
+func markAllReadCmd(client github.NotificationAPI, svc *service.NotificationService) tea.Cmd {
 	return func() tea.Msg {
 		now := time.Now()
 		var err error
@@ -135,7 +135,7 @@ func markAllReadCmd(client *github.Client, svc *service.NotificationService) tea
 // Also marks the thread as read so it disappears from the unread list —
 // GitHub's mute only prevents future notifications, it doesn't remove existing ones.
 // When a service is available, the mute is persisted in SQLite.
-func muteThreadCmd(client *github.Client, svc *service.NotificationService, threadID, repoFullName, subjectTitle string) tea.Cmd {
+func muteThreadCmd(client github.NotificationAPI, svc *service.NotificationService, threadID, repoFullName, subjectTitle string) tea.Cmd {
 	return func() tea.Msg {
 		var err error
 		if svc != nil {
@@ -160,7 +160,7 @@ func muteThreadCmd(client *github.Client, svc *service.NotificationService, thre
 
 // unsubscribeCmd returns a Cmd that unsubscribes from a notification thread.
 // Also marks the thread as read so it disappears from the unread list.
-func unsubscribeCmd(client *github.Client, svc *service.NotificationService, threadID string) tea.Cmd {
+func unsubscribeCmd(client github.NotificationAPI, svc *service.NotificationService, threadID string) tea.Cmd {
 	return func() tea.Msg {
 		var err error
 		if svc != nil {
@@ -199,7 +199,7 @@ func clearStatusCmd() tea.Cmd {
 
 // fetchThreadDetailCmd lazily fetches enriched details for a notification thread.
 // When a service is available, the result is also stored in SQLite and indexed.
-func fetchThreadDetailCmd(client *github.Client, svc *service.NotificationService, threadID, subjectURL, commentURL string, n *github.Notification) tea.Cmd {
+func fetchThreadDetailCmd(client github.NotificationAPI, svc *service.NotificationService, threadID, subjectURL, commentURL string, n *github.Notification) tea.Cmd {
 	return func() tea.Msg {
 		log.Printf("fetch detail: thread=%s subject=%s comment=%s", threadID, subjectURL, commentURL)
 		var detail *github.ThreadDetail
@@ -264,7 +264,7 @@ func fullTextSearchCmd(svc *service.NotificationService, query string) tea.Cmd {
 }
 
 // fetchCurrentUserCmd fetches the authenticated user's login once at startup.
-func fetchCurrentUserCmd(client *github.Client) tea.Cmd {
+func fetchCurrentUserCmd(client github.NotificationAPI) tea.Cmd {
 	return func() tea.Msg {
 		if client == nil {
 			return nil

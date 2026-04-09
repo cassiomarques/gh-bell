@@ -16,14 +16,14 @@ const DefaultDetailTTL = 1 * time.Hour
 // NotificationService orchestrates the GitHub API client and local SQLite
 // store. The TUI talks only to this service — never to the API or DB directly.
 type NotificationService struct {
-	client    *github.Client
+	client    github.NotificationAPI
 	store     *storage.Store
 	search    *search.SearchIndex
 	detailTTL time.Duration
 }
 
 // New creates a NotificationService.
-func New(client *github.Client, store *storage.Store) *NotificationService {
+func New(client github.NotificationAPI, store *storage.Store) *NotificationService {
 	return &NotificationService{
 		client:    client,
 		store:     store,

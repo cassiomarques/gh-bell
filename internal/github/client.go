@@ -11,6 +11,18 @@ import (
 	"github.com/cli/go-gh/v2/pkg/api"
 )
 
+// NotificationAPI defines the interface for GitHub notification operations.
+// The concrete Client implements this; tests can substitute a FakeClient.
+type NotificationAPI interface {
+	ListNotifications(opts ListOptions) ([]Notification, error)
+	MarkThreadRead(threadID string) error
+	MarkAllRead(upTo *time.Time) error
+	MuteThread(threadID string) error
+	UnsubscribeThread(threadID string) error
+	FetchThreadDetail(subjectURL, commentURL string) (*ThreadDetail, error)
+	GetCurrentUser() (string, error)
+}
+
 // IsAuthError returns true if the error indicates an authentication failure
 // (HTTP 401), typically caused by an expired or invalid token.
 func IsAuthError(err error) bool {

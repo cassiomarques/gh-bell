@@ -56,7 +56,7 @@ var spinnerFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "�
 // This makes the app predictable: given the same state + message, you always
 // get the same result.
 type App struct {
-	client  *github.Client
+	client  github.NotificationAPI
 	service *service.NotificationService // orchestrates API + SQLite cache
 
 	// Data
@@ -135,7 +135,7 @@ func WithService(svc *service.NotificationService) Option {
 }
 
 // NewApp creates an App wired to the given GitHub API client.
-func NewApp(client *github.Client, opts ...Option) App {
+func NewApp(client github.NotificationAPI, opts ...Option) App {
 	a := App{
 		client:      client,
 		currentView: github.ViewUnread,
