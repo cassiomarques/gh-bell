@@ -25,8 +25,14 @@ func sampleNotifications() []github.Notification {
 		{
 			ID: "3", Unread: false, Reason: "subscribed",
 			UpdatedAt: time.Now().Add(-48 * time.Hour),
-			Subject:   github.Subject{Title: "Release v2.0", Type: "Release", URL: "https://api.github.com/repos/org/tool/releases/5"},
-			Repository: github.Repository{FullName: "org/tool", HTMLURL: "https://github.com/org/tool"},
+			Subject:   github.Subject{Title: "Release v2.0", Type: "Release", URL: "https://api.github.com/repos/other-org/tool/releases/5"},
+			Repository: github.Repository{FullName: "other-org/tool", HTMLURL: "https://github.com/other-org/tool"},
+		},
+		{
+			ID: "4", Unread: true, Reason: "ci_activity",
+			UpdatedAt: time.Now().Add(-10 * 24 * time.Hour),
+			Subject:   github.Subject{Title: "CI failed on main", Type: "CheckSuite", URL: "https://api.github.com/repos/other-org/infra/check-suites/99"},
+			Repository: github.Repository{FullName: "other-org/infra", HTMLURL: "https://github.com/other-org/infra"},
 		},
 	}
 }
@@ -38,7 +44,7 @@ func newTestApp() App {
 		height:      24,
 	}
 	a.notifications = sampleNotifications()
-	a.collectReasons()
+	a.collectFilterOptions()
 	return a
 }
 
@@ -59,8 +65,8 @@ func TestApp_CursorNavigation(t *testing.T) {
 	// Move past end
 	a.cursor = 100
 	a.clampCursor()
-	if a.cursor != 2 {
-		t.Errorf("cursor = %d, want 2 (clamped)", a.cursor)
+	if a.cursor != 3 {
+		t.Errorf("cursor = %d, want 3 (clamped)", a.cursor)
 	}
 
 	// Move before start
@@ -115,8 +121,8 @@ func TestApp_RemoveNotification(t *testing.T) {
 	a := newTestApp()
 
 	a.removeNotification("2")
-	if len(a.notifications) != 2 {
-		t.Fatalf("expected 2 notifications after removal, got %d", len(a.notifications))
+	if len(a.notifications) != 3 {
+		t.Fatalf("expected 3 notifications after removal, got %d", len(a.notifications))
 	}
 	for _, n := range a.notifications {
 		if n.ID == "2" {
@@ -190,8 +196,8 @@ func TestApp_EmptyNotifications(t *testing.T) {
 func TestApp_CollectReasons(t *testing.T) {
 	a := newTestApp()
 
-	if len(a.knownReasons) != 3 {
-		t.Errorf("expected 3 known reasons, got %d", len(a.knownReasons))
+	if len(a.knownReasons) != 4 {
+		t.Errorf("expected 4 known reasons, got %d", len(a.knownReasons))
 	}
 }
 
@@ -276,7 +282,7 @@ func TestRenderNotificationRow_LongFields(t *testing.T) {
 			Repository: github.Repository{FullName: "very-long-organization-name/very-long-repository-name"},
 		},
 	}
-	a.collectReasons()
+	a.collectFilterOptions()
 
 	row := a.renderNotificationRow(a.notifications[0], false)
 	lines := strings.Split(row, "\n")
@@ -297,5 +303,440 @@ func TestRenderNotificationRow_ColumnsAligned(t *testing.T) {
 		if len(lines) != 1 {
 			t.Errorf("notification %d (%q): rendered %d lines, want 1", i, n.Subject.Title, len(lines))
 		}
+	}
+}
+
+// --- New filter tests ---
+
+func TestApp_TypeFilter(t *testing.T) {
+	a := newTestApp()
+	if got := len(a.filteredNotifications()); got != 4 {
+		t.Fatalf("no filter: got %d, want 4", got)
+	}
+
+	a.typeFilter = "PullRequest"
+	filtered := a.filteredNotifications()
+	if len(filtered) != 1 || filtered[0].ID != "1" {
+		t.Errorf("type=PullRequest: got %d items, want 1 (id=1)", len(filtered))
+	}
+
+	a.typeFilter = "Issue"
+	filtered = a.filteredNotifications()
+	if len(filtered) != 1 || filtered[0].ID != "2" {
+		t.Errorf("type=Issue: got %d items, want 1 (id=2)", len(filtered))
+	}
+
+	a.typeFilter = "Release"
+	filtered = a.filteredNotifications()
+	if len(filtered) != 1 || filtered[0].ID != "3" {
+		t.Errorf("type=Release: got %d items, want 1 (id=3)", len(filtered))
+	}
+}
+
+func TestApp_OrgFilter(t *testing.T) {
+	a := newTestApp()
+
+	a.orgFilter = "org"
+	filtered := a.filteredNotifications()
+	if len(filtered) != 2 {
+		t.Fatalf("org=org: got %d items, want 2", len(filtered))
+	}
+	for _, n := range filtered {
+		if orgFromFullName(n.Repository.FullName) != "org" {
+			t.Errorf("unexpected org in result: %s", n.Repository.FullName)
+		}
+	}
+
+	a.orgFilter = "other-org"
+	filtered = a.filteredNotifications()
+	if len(filtered) != 2 {
+		t.Fatalf("org=other-org: got %d items, want 2", len(filtered))
+	}
+}
+
+func TestApp_ParticipatingFilter(t *testing.T) {
+	a := newTestApp()
+	a.participating = true
+	filtered := a.filteredNotifications()
+	// Only review_requested (id=1) and mention (id=2) are participating
+	if len(filtered) != 2 {
+		t.Fatalf("participating: got %d items, want 2", len(filtered))
+	}
+	for _, n := range filtered {
+		if !participatingReasons[n.Reason] {
+			t.Errorf("non-participating reason in results: %s", n.Reason)
+		}
+	}
+}
+
+func TestApp_AgeFilter(t *testing.T) {
+	a := newTestApp()
+
+	// age=1 (24h): should include id=1 (5min ago) and id=2 (2h ago), exclude id=3 (48h) and id=4 (10d)
+	a.ageFilter = 1
+	filtered := a.filteredNotifications()
+	if len(filtered) != 2 {
+		t.Fatalf("age=24h: got %d items, want 2", len(filtered))
+	}
+
+	// age=2 (7d): should include id=1, id=2, id=3, exclude id=4 (10d)
+	a.ageFilter = 2
+	filtered = a.filteredNotifications()
+	if len(filtered) != 3 {
+		t.Fatalf("age=7d: got %d items, want 3", len(filtered))
+	}
+
+	// age=3 (30d): should include all 4
+	a.ageFilter = 3
+	filtered = a.filteredNotifications()
+	if len(filtered) != 4 {
+		t.Fatalf("age=30d: got %d items, want 4", len(filtered))
+	}
+}
+
+func TestApp_TitleSearch(t *testing.T) {
+	a := newTestApp()
+
+	a.titleSearch = "login"
+	filtered := a.filteredNotifications()
+	if len(filtered) != 1 || filtered[0].ID != "1" {
+		t.Errorf("search=login: got %d items, want 1 (id=1)", len(filtered))
+	}
+
+	// Case insensitive
+	a.titleSearch = "CACHING"
+	filtered = a.filteredNotifications()
+	if len(filtered) != 1 || filtered[0].ID != "2" {
+		t.Errorf("search=CACHING: got %d items, want 1 (id=2)", len(filtered))
+	}
+
+	a.titleSearch = "xyz-no-match"
+	filtered = a.filteredNotifications()
+	if len(filtered) != 0 {
+		t.Errorf("search=xyz-no-match: got %d items, want 0", len(filtered))
+	}
+}
+
+func TestApp_CombinedNewFilters(t *testing.T) {
+	a := newTestApp()
+
+	// org=org AND type=Issue → only id=2
+	a.orgFilter = "org"
+	a.typeFilter = "Issue"
+	filtered := a.filteredNotifications()
+	if len(filtered) != 1 || filtered[0].ID != "2" {
+		t.Errorf("org+type: got %d items, want 1 (id=2)", len(filtered))
+	}
+
+	// Add participating → id=2 has reason=mention (participating), should still match
+	a.participating = true
+	filtered = a.filteredNotifications()
+	if len(filtered) != 1 || filtered[0].ID != "2" {
+		t.Errorf("org+type+participating: got %d items, want 1 (id=2)", len(filtered))
+	}
+
+	// Change type to Release → org=org has no Release (Release is other-org/tool)
+	a.typeFilter = "Release"
+	a.participating = false
+	filtered = a.filteredNotifications()
+	if len(filtered) != 0 {
+		t.Errorf("org=org+type=Release: got %d items, want 0", len(filtered))
+	}
+}
+
+func TestApp_CycleTypeFilter(t *testing.T) {
+	a := newTestApp()
+	if len(a.knownTypes) != 4 {
+		t.Fatalf("expected 4 known types, got %d: %v", len(a.knownTypes), a.knownTypes)
+	}
+
+	a.cycleTypeFilter()
+	if a.typeFilter != a.knownTypes[0] {
+		t.Errorf("first cycle: got %q, want %q", a.typeFilter, a.knownTypes[0])
+	}
+	for i := 1; i < len(a.knownTypes); i++ {
+		a.cycleTypeFilter()
+	}
+	a.cycleTypeFilter() // should wrap to ""
+	if a.typeFilter != "" {
+		t.Errorf("after full cycle: got %q, want empty", a.typeFilter)
+	}
+}
+
+func TestApp_CycleOrgFilter(t *testing.T) {
+	a := newTestApp()
+	if len(a.knownOrgs) != 2 {
+		t.Fatalf("expected 2 known orgs, got %d: %v", len(a.knownOrgs), a.knownOrgs)
+	}
+
+	a.cycleOrgFilter()
+	first := a.orgFilter
+	if first == "" {
+		t.Fatal("first cycle should set an org")
+	}
+	a.cycleOrgFilter()
+	a.cycleOrgFilter() // should wrap to ""
+	if a.orgFilter != "" {
+		t.Errorf("after full cycle: got %q, want empty", a.orgFilter)
+	}
+}
+
+func TestApp_CycleAgeFilter(t *testing.T) {
+	a := newTestApp()
+	if a.ageFilter != 0 {
+		t.Fatal("age filter should start at 0")
+	}
+	a.cycleAgeFilter() // → 1 (24h)
+	if a.ageFilter != 1 {
+		t.Errorf("got %d, want 1", a.ageFilter)
+	}
+	a.cycleAgeFilter() // → 2 (7d)
+	a.cycleAgeFilter() // → 3 (30d)
+	a.cycleAgeFilter() // → 0 (all)
+	if a.ageFilter != 0 {
+		t.Errorf("after full cycle: got %d, want 0", a.ageFilter)
+	}
+}
+
+func TestApp_HasActiveFilters(t *testing.T) {
+	a := newTestApp()
+	if a.hasActiveFilters() {
+		t.Fatal("should have no active filters initially")
+	}
+
+	a.typeFilter = "Issue"
+	if !a.hasActiveFilters() {
+		t.Fatal("should detect type filter")
+	}
+	a.typeFilter = ""
+
+	a.participating = true
+	if !a.hasActiveFilters() {
+		t.Fatal("should detect participating")
+	}
+	a.participating = false
+
+	a.ageFilter = 2
+	if !a.hasActiveFilters() {
+		t.Fatal("should detect age filter")
+	}
+}
+
+// --- Selection preservation & new notification tracking ---
+
+func TestApp_SelectionPreservedOnRefresh(t *testing.T) {
+	a := newTestApp()
+
+	// Select the 2nd notification (id=2)
+	a.cursor = 1
+	selectedID := a.filteredNotifications()[a.cursor].ID
+	if selectedID != "2" {
+		t.Fatalf("expected selected id=2, got %s", selectedID)
+	}
+
+	// Simulate a refresh: new notifications arrive with a new item prepended.
+	// The old item id=2 should still be selected after the update.
+	oldIDs := make(map[string]bool, len(a.notifications))
+	for _, n := range a.notifications {
+		oldIDs[n.ID] = true
+	}
+
+	newNotification := github.Notification{
+		ID: "99", Unread: true, Reason: "assign",
+		UpdatedAt: time.Now().Add(-1 * time.Minute),
+		Subject:   github.Subject{Title: "New task", Type: "Issue"},
+		Repository: github.Repository{FullName: "org/app"},
+	}
+	incoming := append([]github.Notification{newNotification}, a.notifications...)
+
+	// Compute new IDs
+	newIDs := make(map[string]bool)
+	for _, n := range incoming {
+		if !oldIDs[n.ID] {
+			newIDs[n.ID] = true
+		}
+	}
+	a.newNotificationIDs = newIDs
+
+	// Group new at top (same logic as Update)
+	var newNotifs, existingNotifs []github.Notification
+	for _, n := range incoming {
+		if newIDs[n.ID] {
+			newNotifs = append(newNotifs, n)
+		} else {
+			existingNotifs = append(existingNotifs, n)
+		}
+	}
+	a.notifications = append(newNotifs, existingNotifs...)
+	a.collectFilterOptions()
+
+	// Restore cursor
+	filtered := a.filteredNotifications()
+	for i, n := range filtered {
+		if n.ID == selectedID {
+			a.cursor = i
+			break
+		}
+	}
+	a.clampCursor()
+
+	// The selected notification should still be id=2
+	sel := a.selectedNotification()
+	if sel == nil || sel.ID != "2" {
+		t.Errorf("selection not preserved: got %v, want id=2", sel)
+	}
+}
+
+func TestApp_NewNotificationTracking(t *testing.T) {
+	a := newTestApp()
+
+	// Record old IDs
+	oldIDs := make(map[string]bool)
+	for _, n := range a.notifications {
+		oldIDs[n.ID] = true
+	}
+
+	// Simulate refresh with one new notification
+	newNotif := github.Notification{
+		ID: "50", Unread: true, Reason: "mention",
+		UpdatedAt: time.Now(),
+		Subject:   github.Subject{Title: "Brand new", Type: "Issue"},
+		Repository: github.Repository{FullName: "org/app"},
+	}
+	incoming := append([]github.Notification{newNotif}, a.notifications...)
+
+	newIDs := make(map[string]bool)
+	for _, n := range incoming {
+		if !oldIDs[n.ID] {
+			newIDs[n.ID] = true
+		}
+	}
+	a.newNotificationIDs = newIDs
+
+	if len(newIDs) != 1 {
+		t.Fatalf("expected 1 new ID, got %d", len(newIDs))
+	}
+	if !newIDs["50"] {
+		t.Error("expected id=50 to be marked as new")
+	}
+	// Old IDs should NOT be marked new
+	if newIDs["1"] || newIDs["2"] || newIDs["3"] || newIDs["4"] {
+		t.Error("existing notifications should not be marked as new")
+	}
+}
+
+func TestApp_NewNotificationsGroupedAtTop(t *testing.T) {
+	a := newTestApp()
+
+	oldIDs := make(map[string]bool)
+	for _, n := range a.notifications {
+		oldIDs[n.ID] = true
+	}
+
+	// Add two new notifications at positions that would normally interleave
+	newNotifs := []github.Notification{
+		{
+			ID: "10", Unread: true, Reason: "assign",
+			UpdatedAt: time.Now().Add(-3 * time.Hour), // older than id=2
+			Subject:   github.Subject{Title: "New A", Type: "Issue"},
+			Repository: github.Repository{FullName: "org/app"},
+		},
+		{
+			ID: "11", Unread: true, Reason: "mention",
+			UpdatedAt: time.Now().Add(-1 * time.Minute), // very recent
+			Subject:   github.Subject{Title: "New B", Type: "PullRequest"},
+			Repository: github.Repository{FullName: "org/lib"},
+		},
+	}
+	// API would return sorted by updated_at: id=11, id=1, id=2, id=10, id=3, id=4
+	incoming := []github.Notification{newNotifs[1], a.notifications[0], a.notifications[1], newNotifs[0], a.notifications[2], a.notifications[3]}
+
+	newIDs := make(map[string]bool)
+	for _, n := range incoming {
+		if !oldIDs[n.ID] {
+			newIDs[n.ID] = true
+		}
+	}
+
+	// Group new at top
+	var grouped, existing []github.Notification
+	for _, n := range incoming {
+		if newIDs[n.ID] {
+			grouped = append(grouped, n)
+		} else {
+			existing = append(existing, n)
+		}
+	}
+	a.notifications = append(grouped, existing...)
+	a.newNotificationIDs = newIDs
+
+	// First two should be the new ones
+	if a.notifications[0].ID != "11" || a.notifications[1].ID != "10" {
+		t.Errorf("new items should be at top: got [%s, %s], want [11, 10]",
+			a.notifications[0].ID, a.notifications[1].ID)
+	}
+	// Remaining should be the original order
+	if a.notifications[2].ID != "1" || a.notifications[3].ID != "2" {
+		t.Errorf("existing items should follow: got [%s, %s], want [1, 2]",
+			a.notifications[2].ID, a.notifications[3].ID)
+	}
+}
+
+func TestApp_InitialLoadNoNewMarkers(t *testing.T) {
+	// On initial load (no previous notifications), nothing should be marked new
+	a := App{width: 120, height: 24}
+	// Simulate first load
+	oldIDs := make(map[string]bool) // empty — no previous data
+	incoming := sampleNotifications()
+
+	newIDs := make(map[string]bool)
+	if len(oldIDs) > 0 {
+		for _, n := range incoming {
+			if !oldIDs[n.ID] {
+				newIDs[n.ID] = true
+			}
+		}
+	}
+	a.newNotificationIDs = newIDs
+	a.notifications = incoming
+
+	if len(a.newNotificationIDs) != 0 {
+		t.Errorf("initial load should have no new markers, got %d", len(a.newNotificationIDs))
+	}
+}
+
+func TestApp_HeaderRendering(t *testing.T) {
+	a := newTestApp()
+	header := a.buildHeader()
+
+	// Should contain the ASCII art text
+	if !strings.Contains(header, "▗▄▄▖") {
+		t.Error("header should contain ASCII art")
+	}
+	// Should contain tip text
+	if !strings.Contains(header, "Tip:") {
+		t.Error("header should contain tip line")
+	}
+	// Should be multi-line
+	lines := strings.Split(header, "\n")
+	if len(lines) < 5 {
+		t.Errorf("header should be multi-line, got %d lines", len(lines))
+	}
+}
+
+func TestApp_NewItemRenderIndicator(t *testing.T) {
+	a := newTestApp()
+	a.newNotificationIDs = map[string]bool{"1": true}
+
+	// New item (non-selected) should have • prefix
+	row := a.renderNotificationRow(a.notifications[0], false)
+	if !strings.Contains(row, "•") {
+		t.Error("new notification row should contain • indicator")
+	}
+
+	// Old item should NOT have •
+	row2 := a.renderNotificationRow(a.notifications[1], false)
+	if strings.Contains(row2, "•") {
+		t.Error("existing notification row should not contain • indicator")
 	}
 }

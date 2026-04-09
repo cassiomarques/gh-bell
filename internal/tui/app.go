@@ -26,7 +26,21 @@ type filterMode int
 const (
 	filterNone filterMode = iota
 	filterRepo
+	filterTitleSearch
 )
+
+// participatingReasons are the GitHub notification reasons that indicate
+// direct involvement (as opposed to watching/subscribed).
+var participatingReasons = map[string]bool{
+	"assign":             true,
+	"author":             true,
+	"comment":            true,
+	"mention":            true,
+	"review_requested":   true,
+	"team_mention":       true,
+	"manual":             true,
+	"approval_requested": true,
+}
 
 // App is the root Bubble Tea model.
 //
@@ -54,10 +68,15 @@ type App struct {
 	showHelp    bool
 
 	// Filters
-	repoFilter   string
-	reasonFilter string
-	filterInput  filterMode
-	filterBuf    string
+	repoFilter    string
+	reasonFilter  string
+	typeFilter    string
+	orgFilter     string
+	ageFilter     int // 0=all, 1=24h, 2=7d, 3=30d
+	titleSearch   string
+	participating bool
+	filterInput   filterMode
+	filterBuf     string
 
 	// Preview
 	previewScroll int
@@ -66,8 +85,16 @@ type App struct {
 	lastKey     string
 	lastKeyTime time.Time
 
-	// All known reasons (collected from loaded notifications)
+	// Known values for cycling filters (collected from loaded notifications)
 	knownReasons []string
+	knownTypes   []string
+	knownOrgs    []string
+
+	// New notification tracking (set on each refresh)
+	newNotificationIDs map[string]bool
+
+	// Header cache (rebuilt on resize)
+	headerCache string
 }
 
 // NewApp creates an App wired to the given GitHub API client.
@@ -113,12 +140,72 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case notificationsLoadedMsg:
 		log.Printf("update: notificationsLoadedMsg with %d notifications", len(msg.notifications))
-		a.notifications = msg.notifications
+
+		// Preserve selection: remember which notification was selected
+		// before replacing the list, then restore cursor position after.
+		var selectedID string
+		if sel := a.selectedNotification(); sel != nil {
+			selectedID = sel.ID
+		}
+
+		// Track new items: compare old IDs with incoming IDs.
+		// On initial load (no previous data), don't mark anything as new.
+		oldIDs := make(map[string]bool, len(a.notifications))
+		for _, n := range a.notifications {
+			oldIDs[n.ID] = true
+		}
+		newIDs := make(map[string]bool)
+		if len(oldIDs) > 0 {
+			for _, n := range msg.notifications {
+				if !oldIDs[n.ID] {
+					newIDs[n.ID] = true
+				}
+			}
+		}
+		a.newNotificationIDs = newIDs
+
+		// Group new notifications at the top (preserving chronological order
+		// within each group) so the • indicators aren't scattered.
+		if len(newIDs) > 0 {
+			var newNotifs, existingNotifs []github.Notification
+			for _, n := range msg.notifications {
+				if newIDs[n.ID] {
+					newNotifs = append(newNotifs, n)
+				} else {
+					existingNotifs = append(existingNotifs, n)
+				}
+			}
+			a.notifications = append(newNotifs, existingNotifs...)
+		} else {
+			a.notifications = msg.notifications
+		}
 		a.loading = false
 		a.statusText = ""
 		a.statusError = false
-		a.collectReasons()
+		a.collectFilterOptions()
+
+		// Restore cursor to the previously selected notification
+		if selectedID != "" {
+			filtered := a.filteredNotifications()
+			found := false
+			for i, n := range filtered {
+				if n.ID == selectedID {
+					a.cursor = i
+					found = true
+					break
+				}
+			}
+			if !found {
+				a.cursor = 0
+			}
+		}
 		a.clampCursor()
+
+		if len(newIDs) > 0 {
+			a.statusText = fmt.Sprintf("%d new", len(newIDs))
+			a.statusError = false
+			return a, clearStatusCmd()
+		}
 		return a, nil
 
 	case errorMsg:
@@ -221,6 +308,10 @@ func (a App) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		a.filterInput = filterRepo
 		a.filterBuf = a.repoFilter
 		return a, nil
+	case "s":
+		a.filterInput = filterTitleSearch
+		a.filterBuf = a.titleSearch
+		return a, nil
 	case "f":
 		if a.focused == focusList {
 			a.cycleReasonFilter()
@@ -230,9 +321,14 @@ func (a App) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 	case "escape", "esc":
 		// Clear all filters
-		if a.repoFilter != "" || a.reasonFilter != "" {
+		if a.hasActiveFilters() {
 			a.repoFilter = ""
 			a.reasonFilter = ""
+			a.typeFilter = ""
+			a.orgFilter = ""
+			a.ageFilter = 0
+			a.titleSearch = ""
+			a.participating = false
 			a.cursor = 0
 			a.offset = 0
 			return a, nil
@@ -256,8 +352,13 @@ func (a App) handleFilterInput(key string) (tea.Model, tea.Cmd) {
 		a.filterInput = filterNone
 		return a, nil
 	case "escape", "esc":
-		// Cancel: clear filter and exit
-		a.repoFilter = ""
+		// Cancel: clear the active filter and exit
+		switch a.filterInput {
+		case filterRepo:
+			a.repoFilter = ""
+		case filterTitleSearch:
+			a.titleSearch = ""
+		}
 		a.filterBuf = ""
 		a.filterInput = filterNone
 		a.cursor = 0
@@ -273,7 +374,12 @@ func (a App) handleFilterInput(key string) (tea.Model, tea.Cmd) {
 		}
 	}
 	// Live filter: apply as user types
-	a.repoFilter = a.filterBuf
+	switch a.filterInput {
+	case filterRepo:
+		a.repoFilter = a.filterBuf
+	case filterTitleSearch:
+		a.titleSearch = a.filterBuf
+	}
 	a.cursor = 0
 	a.offset = 0
 	return a, nil
@@ -340,6 +446,29 @@ func (a App) handleListKey(key string) (tea.Model, tea.Cmd) {
 		if n := a.selectedNotification(); n != nil {
 			return a, unsubscribeCmd(a.client, n.ID)
 		}
+
+	// Filters (cycling)
+	case "t":
+		a.cycleTypeFilter()
+		a.cursor = 0
+		a.offset = 0
+		return a, nil
+	case "p":
+		a.participating = !a.participating
+		a.cursor = 0
+		a.offset = 0
+		return a, nil
+	case "o":
+		a.cycleOrgFilter()
+		a.cursor = 0
+		a.offset = 0
+		return a, nil
+	case "a":
+		a.cycleAgeFilter()
+		a.cursor = 0
+		a.offset = 0
+		return a, nil
+
 	case "enter":
 		if n := a.selectedNotification(); n != nil {
 			webURL := n.WebURL()
@@ -381,12 +510,17 @@ func (a App) View() tea.View {
 
 	var b strings.Builder
 
-	// Header: view tabs
+	// Header with ASCII art and tips
+	header := a.buildHeader()
+	b.WriteString(header)
+	b.WriteString("\n")
+
+	// View tabs
 	b.WriteString(a.renderTabs())
 	b.WriteString("\n")
 
 	// Filter indicators
-	if a.repoFilter != "" || a.reasonFilter != "" || a.filterInput != filterNone {
+	if a.hasActiveFilters() || a.filterInput != filterNone {
 		b.WriteString(a.renderFilters())
 		b.WriteString("\n")
 	}
@@ -456,6 +590,11 @@ func (a App) renderFilters() string {
 		input := lipgloss.NewStyle().Foreground(theme.ColorText).Render(a.filterBuf + "▏")
 		return lipgloss.NewStyle().Width(a.width).Render(prompt + input)
 	}
+	if a.filterInput == filterTitleSearch {
+		prompt := lipgloss.NewStyle().Foreground(theme.ColorMauve).Bold(true).Render("  Search: ")
+		input := lipgloss.NewStyle().Foreground(theme.ColorText).Render(a.filterBuf + "▏")
+		return lipgloss.NewStyle().Width(a.width).Render(prompt + input)
+	}
 
 	var parts []string
 	if a.repoFilter != "" {
@@ -463,6 +602,21 @@ func (a App) renderFilters() string {
 	}
 	if a.reasonFilter != "" {
 		parts = append(parts, fmt.Sprintf("reason:%s", a.reasonFilter))
+	}
+	if a.typeFilter != "" {
+		parts = append(parts, fmt.Sprintf("type:%s", a.typeFilter))
+	}
+	if a.orgFilter != "" {
+		parts = append(parts, fmt.Sprintf("org:%s", a.orgFilter))
+	}
+	if a.participating {
+		parts = append(parts, "participating")
+	}
+	if a.ageFilter != 0 {
+		parts = append(parts, fmt.Sprintf("age:≤%s", ageFilterLabel(a.ageFilter)))
+	}
+	if a.titleSearch != "" {
+		parts = append(parts, fmt.Sprintf("search:%s", a.titleSearch))
 	}
 	label := strings.Join(parts, "  ")
 	hint := lipgloss.NewStyle().Foreground(theme.Dimmed).Render("  (Esc to clear)")
@@ -588,6 +742,7 @@ func (a App) renderNotificationRowSized(n github.Notification, selected bool, wi
 	reason := truncate(n.ReasonLabel(), 10)
 	repo := truncate(n.Repository.FullName, 24)
 	ago := timeAgo(n.UpdatedAt)
+	isNew := a.newNotificationIDs[n.ID]
 
 	// Fixed column widths: icon(1) + gap(1) + reason(10) + gap(1) + repo(24) + gap(1) + title(flex) + gap(1) + ago(5)
 	const iconW, reasonW, repoW, agoW, padding = 1, 10, 24, 5, 6
@@ -615,6 +770,12 @@ func (a App) renderNotificationRowSized(n github.Notification, selected bool, wi
 			Render(row)
 	}
 
+	// Non-selected: show • for new notifications, space for old
+	prefix := " "
+	if isNew {
+		prefix = "•"
+	}
+
 	// Non-selected rows use per-column colors
 	reasonStyle := lipgloss.NewStyle().Foreground(theme.ReasonColor).Width(reasonW).MaxWidth(reasonW)
 	repoStyle := lipgloss.NewStyle().Foreground(theme.RepoColor).Width(repoW).MaxWidth(repoW)
@@ -628,7 +789,8 @@ func (a App) renderNotificationRowSized(n github.Notification, selected bool, wi
 		agoStyle = agoStyle.Foreground(theme.Dimmed)
 	}
 
-	row := fmt.Sprintf(" %s %s %s %s %s",
+	row := fmt.Sprintf("%s%s %s %s %s %s",
+		prefix,
 		icon,
 		reasonStyle.Render(reason),
 		repoStyle.Render(repo),
@@ -637,7 +799,9 @@ func (a App) renderNotificationRowSized(n github.Notification, selected bool, wi
 	)
 
 	style := lipgloss.NewStyle().Width(width).MaxWidth(width)
-	if !n.Unread {
+	if isNew {
+		style = style.Foreground(theme.ColorGreen)
+	} else if !n.Unread {
 		style = style.Foreground(theme.Dimmed)
 	} else {
 		style = style.Foreground(theme.ColorText)
@@ -672,6 +836,7 @@ func (a App) renderNotificationRow(n github.Notification, selected bool) string 
 	reason := truncate(n.ReasonLabel(), 10)
 	repo := truncate(n.Repository.FullName, 28)
 	ago := timeAgo(n.UpdatedAt)
+	isNew := a.newNotificationIDs[n.ID]
 
 	// Fixed column widths: icon(1) + gap(1) + reason(10) + gap(1) + repo(28) + gap(1) + title(flex) + gap(1) + ago(5)
 	const iconW, reasonW, repoW, agoW, padding = 1, 10, 28, 5, 6
@@ -697,6 +862,11 @@ func (a App) renderNotificationRow(n github.Notification, selected bool) string 
 			Render(row)
 	}
 
+	prefix := " "
+	if isNew {
+		prefix = "•"
+	}
+
 	reasonStyle := lipgloss.NewStyle().Foreground(theme.ReasonColor).Width(reasonW).MaxWidth(reasonW)
 	repoStyle := lipgloss.NewStyle().Foreground(theme.RepoColor).Width(repoW).MaxWidth(repoW)
 	titleStyle := lipgloss.NewStyle().Foreground(theme.ColorText).Width(titleWidth).MaxWidth(titleWidth)
@@ -709,7 +879,8 @@ func (a App) renderNotificationRow(n github.Notification, selected bool) string 
 		agoStyle = agoStyle.Foreground(theme.Dimmed)
 	}
 
-	row := fmt.Sprintf(" %s %s %s %s %s",
+	row := fmt.Sprintf("%s%s %s %s %s %s",
+		prefix,
 		icon,
 		reasonStyle.Render(reason),
 		repoStyle.Render(repo),
@@ -718,7 +889,9 @@ func (a App) renderNotificationRow(n github.Notification, selected bool) string 
 	)
 
 	style := lipgloss.NewStyle().Width(a.width).MaxWidth(a.width)
-	if !n.Unread {
+	if isNew {
+		style = style.Foreground(theme.ColorGreen)
+	} else if !n.Unread {
 		style = style.Foreground(theme.Dimmed)
 	} else {
 		style = style.Foreground(theme.ColorText)
@@ -737,7 +910,7 @@ func (a App) renderStatusBar() string {
 		left = lipgloss.NewStyle().Foreground(color).Render(a.statusText)
 	}
 
-	right := "q:quit  ?:help  r:read  m:mute  Enter:open  ^R:refresh"
+	right := "q:quit  ?:help  r:read  m:mute  /:repo  s:search  t:type  p:part  a:age"
 	rightStyled := lipgloss.NewStyle().Foreground(theme.Dimmed).Render(right)
 
 	gap := a.width - lipgloss.Width(left) - lipgloss.Width(rightStyled)
@@ -760,8 +933,12 @@ func (a App) renderCentered(text string, height int) string {
 // --- State helpers ---
 
 func (a App) filteredNotifications() []github.Notification {
-	if a.repoFilter == "" && a.reasonFilter == "" {
+	if !a.hasActiveFilters() {
 		return a.notifications
+	}
+	var ageCutoff time.Time
+	if a.ageFilter > 0 {
+		ageCutoff = time.Now().Add(-ageFilterDuration(a.ageFilter))
 	}
 	var result []github.Notification
 	for _, n := range a.notifications {
@@ -772,6 +949,24 @@ func (a App) filteredNotifications() []github.Notification {
 			continue
 		}
 		if a.reasonFilter != "" && n.Reason != a.reasonFilter {
+			continue
+		}
+		if a.typeFilter != "" && n.Subject.Type != a.typeFilter {
+			continue
+		}
+		if a.orgFilter != "" && orgFromFullName(n.Repository.FullName) != a.orgFilter {
+			continue
+		}
+		if a.participating && !participatingReasons[n.Reason] {
+			continue
+		}
+		if a.ageFilter > 0 && n.UpdatedAt.Before(ageCutoff) {
+			continue
+		}
+		if a.titleSearch != "" && !strings.Contains(
+			strings.ToLower(n.Subject.Title),
+			strings.ToLower(a.titleSearch),
+		) {
 			continue
 		}
 		result = append(result, n)
@@ -821,16 +1016,113 @@ func (a *App) cycleReasonFilter() {
 	a.reasonFilter = ""
 }
 
-func (a *App) collectReasons() {
-	seen := make(map[string]bool)
-	var reasons []string
+func (a *App) cycleTypeFilter() {
+	if len(a.knownTypes) == 0 {
+		return
+	}
+	if a.typeFilter == "" {
+		a.typeFilter = a.knownTypes[0]
+		return
+	}
+	for i, t := range a.knownTypes {
+		if t == a.typeFilter {
+			next := (i + 1) % (len(a.knownTypes) + 1)
+			if next == len(a.knownTypes) {
+				a.typeFilter = ""
+			} else {
+				a.typeFilter = a.knownTypes[next]
+			}
+			return
+		}
+	}
+	a.typeFilter = ""
+}
+
+func (a *App) cycleOrgFilter() {
+	if len(a.knownOrgs) == 0 {
+		return
+	}
+	if a.orgFilter == "" {
+		a.orgFilter = a.knownOrgs[0]
+		return
+	}
+	for i, o := range a.knownOrgs {
+		if o == a.orgFilter {
+			next := (i + 1) % (len(a.knownOrgs) + 1)
+			if next == len(a.knownOrgs) {
+				a.orgFilter = ""
+			} else {
+				a.orgFilter = a.knownOrgs[next]
+			}
+			return
+		}
+	}
+	a.orgFilter = ""
+}
+
+func (a *App) cycleAgeFilter() {
+	a.ageFilter = (a.ageFilter + 1) % 4 // 0=all, 1=24h, 2=7d, 3=30d
+}
+
+// ageFilterDuration returns the time.Duration for the given age filter value.
+func ageFilterDuration(age int) time.Duration {
+	switch age {
+	case 1:
+		return 24 * time.Hour
+	case 2:
+		return 7 * 24 * time.Hour
+	case 3:
+		return 30 * 24 * time.Hour
+	default:
+		return 0
+	}
+}
+
+// ageFilterLabel returns a human-readable label for the age filter.
+func ageFilterLabel(age int) string {
+	switch age {
+	case 1:
+		return "24h"
+	case 2:
+		return "7d"
+	case 3:
+		return "30d"
+	default:
+		return ""
+	}
+}
+
+func (a *App) collectFilterOptions() {
+	seenReasons := make(map[string]bool)
+	seenTypes := make(map[string]bool)
+	seenOrgs := make(map[string]bool)
+	var reasons, types, orgs []string
 	for _, n := range a.notifications {
-		if !seen[n.Reason] {
-			seen[n.Reason] = true
+		if !seenReasons[n.Reason] {
+			seenReasons[n.Reason] = true
 			reasons = append(reasons, n.Reason)
+		}
+		if !seenTypes[n.Subject.Type] {
+			seenTypes[n.Subject.Type] = true
+			types = append(types, n.Subject.Type)
+		}
+		org := orgFromFullName(n.Repository.FullName)
+		if org != "" && !seenOrgs[org] {
+			seenOrgs[org] = true
+			orgs = append(orgs, org)
 		}
 	}
 	a.knownReasons = reasons
+	a.knownTypes = types
+	a.knownOrgs = orgs
+}
+
+// orgFromFullName extracts the owner/org from "owner/repo".
+func orgFromFullName(fullName string) string {
+	if i := strings.IndexByte(fullName, '/'); i > 0 {
+		return fullName[:i]
+	}
+	return fullName
 }
 
 func (a *App) clampCursor() {
@@ -862,10 +1154,16 @@ func (a *App) clampScroll() {
 	}
 }
 
+func (a App) hasActiveFilters() bool {
+	return a.repoFilter != "" || a.reasonFilter != "" || a.typeFilter != "" ||
+		a.orgFilter != "" || a.ageFilter != 0 || a.titleSearch != "" || a.participating
+}
+
 func (a App) contentHeight() int {
-	// height minus tabs (1) + status bar (1) + possible filter line
-	used := 2
-	if a.repoFilter != "" || a.reasonFilter != "" {
+	// height minus header + tabs (1) + status bar (1) + possible filter line
+	headerH := lipgloss.Height(a.buildHeader()) + 1 // +1 for the newline after header
+	used := headerH + 2                              // tabs(1) + status bar(1)
+	if a.hasActiveFilters() || a.filterInput != filterNone {
 		used++
 	}
 	h := a.height - used
@@ -873,6 +1171,56 @@ func (a App) contentHeight() int {
 		h = 1
 	}
 	return h
+}
+
+// --- Header ---
+
+// bellASCII is the ASCII art title for gh-bell.
+var bellASCII = []string{
+	"  ▄▄ ▗▖ ▗▖     ▗▄▄▖      ▗▄▖  ▗▄▖  ",
+	" █▀▀▌▐▌ ▐▌     ▐▛▀▜▌     ▝▜▌  ▝▜▌  ",
+	"▐▌   ▐▌ ▐▌     ▐▌ ▐▌ ▟█▙  ▐▌   ▐▌  ",
+	"▐▌▗▄▖▐███▌     ▐███ ▐▙▄▟▌ ▐▌   ▐▌  ",
+	"▐▌▝▜▌▐▌ ▐▌     ▐▌ ▐▌▐▛▀▀▘ ▐▌   ▐▌  ",
+	" █▄▟▌▐▌ ▐▌     ▐▙▄▟▌▝█▄▄▌ ▐▙▄  ▐▙▄ ",
+	"  ▀▀ ▝▘ ▝▘     ▝▀▀▀  ▝▀▀   ▀▀   ▀▀",
+}
+
+func colorizeASCII(lines []string) string {
+	style := lipgloss.NewStyle().Foreground(theme.ColorLavender)
+	var result strings.Builder
+	for i, line := range lines {
+		result.WriteString(style.Render(line))
+		if i < len(lines)-1 {
+			result.WriteRune('\n')
+		}
+	}
+	return result.String()
+}
+
+func (a App) buildHeader() string {
+	art := colorizeASCII(bellASCII)
+
+	tipKey := lipgloss.NewStyle().Foreground(theme.ColorMauve).Bold(true)
+	tipText := lipgloss.NewStyle().Foreground(theme.ColorOverlay1)
+	tip := tipText.Render("  Tip: ") +
+		tipKey.Render("?") + tipText.Render(" help · ") +
+		tipKey.Render("/") + tipText.Render(" repo · ") +
+		tipKey.Render("s") + tipText.Render(" search · ") +
+		tipKey.Render("1/2/3") + tipText.Render(" views")
+
+	inner := art + "\n\n" + tip
+
+	return lipgloss.NewStyle().
+		Width(a.width).
+		Padding(0, 1).
+		BorderStyle(lipgloss.RoundedBorder()).
+		BorderForeground(theme.ColorSurface2).
+		BorderBottom(true).
+		BorderLeft(false).
+		BorderRight(false).
+		BorderTop(false).
+		Render(inner)
 }
 
 // --- Utilities ---
@@ -921,7 +1269,17 @@ func (a App) renderHelpOverlay() string {
 	b.WriteByte('\n')
 	b.WriteString(line("/", "Filter by repo"))
 	b.WriteByte('\n')
+	b.WriteString(line("s", "Search titles"))
+	b.WriteByte('\n')
 	b.WriteString(line("f", "Cycle reason filter"))
+	b.WriteByte('\n')
+	b.WriteString(line("t", "Cycle type filter"))
+	b.WriteByte('\n')
+	b.WriteString(line("o", "Cycle org filter"))
+	b.WriteByte('\n')
+	b.WriteString(line("a", "Cycle age filter"))
+	b.WriteByte('\n')
+	b.WriteString(line("p", "Toggle participating"))
 	b.WriteByte('\n')
 	b.WriteString(line("Esc", "Clear filters"))
 	b.WriteByte('\n')
