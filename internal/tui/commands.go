@@ -38,7 +38,9 @@ func authErrorMessage(err error) error {
 }
 
 // fetchNotificationsCmd returns a Cmd that fetches notifications from the API.
-// When a service is provided, it also stores the results in SQLite.
+// When a service is provided, it uses SmartRefresh (incremental if full sync
+// was already done, otherwise full paginated fetch). Falls back to direct
+// client call if no service is available.
 // Retries up to maxRetries times on transient server errors with backoff.
 // Auth errors (expired/invalid token) are returned immediately without retry.
 func fetchNotificationsCmd(client github.NotificationAPI, svc *service.NotificationService, view github.View) tea.Cmd {
@@ -54,10 +56,7 @@ func fetchNotificationsCmd(client github.NotificationAPI, svc *service.Notificat
 			var notifications []github.Notification
 			var err error
 			if svc != nil {
-				notifications, err = svc.Refresh(github.ListOptions{
-					View:    view,
-					PerPage: 50,
-				})
+				notifications, err = svc.SmartRefresh(view)
 			} else if client != nil {
 				notifications, err = client.ListNotifications(github.ListOptions{
 					View:    view,
@@ -86,6 +85,26 @@ func fetchNotificationsCmd(client github.NotificationAPI, svc *service.Notificat
 					"Set 'token' to a classic PAT in ~/.gh-bell/config.yaml", lastErr)}
 		}
 		return errorMsg{err: lastErr}
+	}
+}
+
+// forceResyncCmd clears the full_sync_done flag and performs a full paginated
+// re-fetch of all notifications. Used when the user presses Ctrl+Shift+R.
+func forceResyncCmd(svc *service.NotificationService, view github.View) tea.Cmd {
+	return func() tea.Msg {
+		if svc == nil {
+			return errorMsg{err: fmt.Errorf("force resync requires persistence (service not available)")}
+		}
+		log.Println("force resync: clearing full_sync_done and re-fetching all pages")
+		notifications, err := svc.ForceFullSync(view)
+		if err != nil {
+			if github.IsAuthError(err) {
+				return errorMsg{err: authErrorMessage(err)}
+			}
+			return errorMsg{err: err}
+		}
+		log.Printf("force resync: got %d total notifications", len(notifications))
+		return notificationsLoadedMsg{notifications: notifications}
 	}
 }
 
