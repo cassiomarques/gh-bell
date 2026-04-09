@@ -21,10 +21,10 @@ gh bell
 gh-bell requires a [classic GitHub Personal Access Token (PAT)](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens#creating-a-personal-access-token-classic) with `notifications` and `repo` scopes. GitHub's Notifications API returns persistent 502 errors when called with the OAuth tokens issued by `gh auth login`.
 
 1. [Create a classic PAT](https://github.com/settings/tokens/new) — select `notifications` and `repo` scopes
-2. Export it in your shell profile (e.g. `~/.zshrc` or `~/.bashrc`):
+2. Add it to `~/.gh-bell/config.yaml` (created automatically on first run):
 
-```bash
-export GH_BELL_TOKEN=ghp_your_token
+```yaml
+token: ghp_your_token
 ```
 
 3. Run:
@@ -33,14 +33,19 @@ export GH_BELL_TOKEN=ghp_your_token
 gh bell
 ```
 
-Token resolution order: `GH_BELL_TOKEN` → `GH_TOKEN` → `GITHUB_TOKEN` → `gh auth login` keyring.
-
 ### Configuration
 
-| Environment variable | Description | Default |
-|---------------------|-------------|---------|
-| `GH_BELL_TOKEN` | Classic PAT for authentication | (use `gh auth login`) |
-| `GH_BELL_REFRESH` | Auto-refresh interval in seconds | `60` |
+All settings live in `~/.gh-bell/config.yaml` (created with defaults on first run, `0600` permissions):
+
+```yaml
+# GitHub classic Personal Access Token (required).
+token: ghp_your_token
+
+# Auto-refresh interval in seconds (default: 60).
+refresh_interval: 60
+```
+
+Environment variables `GH_BELL_TOKEN` and `GH_BELL_REFRESH` still work and **override** the config file (useful for CI or one-off runs).
 
 ## Features
 
@@ -133,6 +138,7 @@ gh-bell stores local data in `~/.gh-bell/`:
 
 | File | Purpose |
 |------|---------|
+| `config.yaml` | Configuration — token, refresh interval (0600 permissions) |
 | `meta.db` | SQLite database — cached notifications, thread details, mutes, preferences |
 | `search.bleve/` | Bleve full-text search index |
 | `gh-bell.log` | Debug log (overwritten each run) |

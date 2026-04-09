@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"os"
 	"strings"
 	"time"
 
@@ -65,17 +64,17 @@ type Client struct {
 	rest *api.RESTClient
 }
 
-// NewClient creates a Client. It checks GH_BELL_TOKEN first (for users who
-// prefer a classic PAT), then falls back to the default go-gh auth chain
+// NewClient creates a Client using the provided token. If token is empty,
+// it falls back to the default go-gh auth chain
 // (GH_TOKEN → GITHUB_TOKEN → gh auth login keyring).
-func NewClient() (*Client, error) {
+func NewClient(token string) (*Client, error) {
 	var rest *api.RESTClient
 	var err error
 
-	if token := os.Getenv("GH_BELL_TOKEN"); token != "" {
+	if token != "" {
 		rest, err = api.NewRESTClient(api.ClientOptions{AuthToken: token})
 		if err != nil {
-			return nil, fmt.Errorf("creating client with GH_BELL_TOKEN: %w", err)
+			return nil, fmt.Errorf("creating client with token: %w", err)
 		}
 	} else {
 		rest, err = api.DefaultRESTClient()

@@ -3,7 +3,6 @@ package tui
 import (
 	"fmt"
 	"log"
-	"os"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -32,12 +31,8 @@ const maxRetries = 3
 // authErrorMessage wraps an auth error with a clear, actionable message
 // telling the user to regenerate their token.
 func authErrorMessage(err error) error {
-	if os.Getenv("GH_BELL_TOKEN") != "" {
-		return fmt.Errorf("token expired or invalid — regenerate your classic PAT at "+
-			"https://github.com/settings/tokens and update GH_BELL_TOKEN")
-	}
-	return fmt.Errorf("authentication failed — try: gh auth login, "+
-		"or set GH_BELL_TOKEN to a classic PAT")
+	return fmt.Errorf("token expired or invalid — regenerate your classic PAT at "+
+		"https://github.com/settings/tokens and update 'token' in ~/.gh-bell/config.yaml")
 }
 
 // fetchNotificationsCmd returns a Cmd that fetches notifications from the API.
@@ -86,7 +81,7 @@ func fetchNotificationsCmd(client github.NotificationAPI, svc *service.Notificat
 		if github.IsServerError(lastErr) {
 			return errorMsg{err: fmt.Errorf(
 				"%w — GitHub's notification API may not work with OAuth tokens. "+
-					"Try: GH_BELL_TOKEN=ghp_your_classic_pat gh bell", lastErr)}
+					"Set 'token' to a classic PAT in ~/.gh-bell/config.yaml", lastErr)}
 		}
 		return errorMsg{err: lastErr}
 	}

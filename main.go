@@ -5,10 +5,10 @@ import (
 	"log"
 	"os"
 	"path/filepath"
-	"strconv"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/cassiomarques/gh-bell/internal/config"
 	"github.com/cassiomarques/gh-bell/internal/github"
 	"github.com/cassiomarques/gh-bell/internal/search"
 	"github.com/cassiomarques/gh-bell/internal/service"
@@ -47,13 +47,19 @@ func main() {
 		defer logFile.Close()
 	}
 
+	log.Println("loading configuration")
+	cfg, err := config.Load()
+	if err != nil {
+		log.Printf("warning: config load error: %v", err)
+	}
+
 	log.Println("creating GitHub API client")
-	if os.Getenv("GH_BELL_TOKEN") != "" {
-		log.Println("using GH_BELL_TOKEN (classic PAT)")
+	if cfg.Token != "" {
+		log.Println("using configured token (classic PAT)")
 	} else {
 		log.Println("using default gh auth token")
 	}
-	client, err := github.NewClient()
+	client, err := github.NewClient(cfg.Token)
 	if err != nil {
 		log.Printf("client creation failed: %v", err)
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -92,15 +98,11 @@ func main() {
 		}
 	}
 
-	// Parse optional refresh interval from GH_BELL_REFRESH (seconds)
+	// Apply refresh interval from config
 	var refreshInterval time.Duration
-	if s := os.Getenv("GH_BELL_REFRESH"); s != "" {
-		if secs, err := strconv.Atoi(s); err == nil && secs > 0 {
-			refreshInterval = time.Duration(secs) * time.Second
-			log.Printf("refresh interval set to %s (from GH_BELL_REFRESH)", refreshInterval)
-		} else {
-			log.Printf("ignoring invalid GH_BELL_REFRESH=%q, using default", s)
-		}
+	if cfg.RefreshInterval > 0 {
+		refreshInterval = time.Duration(cfg.RefreshInterval) * time.Second
+		log.Printf("refresh interval set to %s", refreshInterval)
 	}
 
 	opts := []tui.Option{tui.WithRefreshInterval(refreshInterval)}
