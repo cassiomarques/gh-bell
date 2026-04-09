@@ -293,6 +293,39 @@ func (s *Store) PurgeOldDetails() (int, error) {
 
 // --- Thread Details ---
 
+// LatestUpdatedAt returns the most recent updated_at timestamp from cached
+// notifications, or nil if the table is empty.
+func (s *Store) LatestUpdatedAt() (*time.Time, error) {
+	var raw *string
+	err := s.db.QueryRow("SELECT MAX(updated_at) FROM notifications").Scan(&raw)
+	if err != nil {
+		return nil, err
+	}
+	if raw == nil {
+		return nil, nil
+	}
+	// modernc.org/sqlite stores time.Time as "2006-01-02 15:04:05 +0000 UTC"
+	formats := []string{
+		"2006-01-02 15:04:05 +0000 UTC",
+		"2006-01-02T15:04:05Z",
+		"2006-01-02 15:04:05+00:00",
+		time.RFC3339,
+	}
+	for _, f := range formats {
+		if t, err := time.Parse(f, *raw); err == nil {
+			return &t, nil
+		}
+	}
+	return nil, fmt.Errorf("parse MAX(updated_at) %q: unknown format", *raw)
+}
+
+// NotificationCount returns the number of notifications in the cache.
+func (s *Store) NotificationCount() (int, error) {
+	var count int
+	err := s.db.QueryRow("SELECT COUNT(*) FROM notifications").Scan(&count)
+	return count, err
+}
+
 // UpsertDetail stores or updates cached thread detail data.
 func (s *Store) UpsertDetail(threadID string, d *github.ThreadDetail) error {
 	labelsJSON, err := json.Marshal(d.Labels)

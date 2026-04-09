@@ -711,3 +711,67 @@ func TestPurgeOldDetails(t *testing.T) {
 		t.Fatal("expected detail for thread 1 to still exist")
 	}
 }
+
+func TestLatestUpdatedAt_Empty(t *testing.T) {
+	s := testStore(t)
+	ts, err := s.LatestUpdatedAt()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ts != nil {
+		t.Fatalf("expected nil for empty table, got %v", ts)
+	}
+}
+
+func TestLatestUpdatedAt_ReturnsMax(t *testing.T) {
+	s := testStore(t)
+
+	n1 := sampleNotification("1")
+	n1.UpdatedAt = time.Date(2025, 1, 10, 0, 0, 0, 0, time.UTC)
+	n2 := sampleNotification("2")
+	n2.UpdatedAt = time.Date(2025, 1, 20, 0, 0, 0, 0, time.UTC)
+	n3 := sampleNotification("3")
+	n3.UpdatedAt = time.Date(2025, 1, 15, 0, 0, 0, 0, time.UTC)
+
+	if err := s.UpsertNotifications([]github.Notification{n1, n2, n3}); err != nil {
+		t.Fatal(err)
+	}
+
+	ts, err := s.LatestUpdatedAt()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ts == nil {
+		t.Fatal("expected non-nil timestamp")
+	}
+	if !ts.Equal(time.Date(2025, 1, 20, 0, 0, 0, 0, time.UTC)) {
+		t.Fatalf("expected 2025-01-20, got %v", ts)
+	}
+}
+
+func TestNotificationCount(t *testing.T) {
+	s := testStore(t)
+
+	count, err := s.NotificationCount()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatalf("expected 0 for empty table, got %d", count)
+	}
+
+	if err := s.UpsertNotifications([]github.Notification{
+		sampleNotification("1"),
+		sampleNotification("2"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	count, err = s.NotificationCount()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count != 2 {
+		t.Fatalf("expected 2, got %d", count)
+	}
+}
