@@ -429,8 +429,8 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, nil
 
 	case spinnerTickMsg:
-		// Only keep ticking while we're actively loading a detail
-		if a.detailLoading != "" {
+		// Keep ticking while loading details or refreshing the notification list
+		if a.detailLoading != "" || a.loading {
 			a.spinnerFrame = (a.spinnerFrame + 1) % len(spinnerFrames)
 			return a, spinnerTickCmd()
 		}
@@ -488,12 +488,12 @@ func (a App) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		a.loading = true
 		a.statusText = ""
 		a.statusError = false
-		return a, fetchNotificationsCmd(a.client, a.service, a.currentView)
+		return a, tea.Batch(fetchNotificationsCmd(a.client, a.service, a.currentView), spinnerTickCmd())
 	case "ctrl+f":
 		a.loading = true
 		a.statusText = "Force resyncing all notifications…"
 		a.statusError = false
-		return a, forceResyncCmd(a.service, a.currentView)
+		return a, tea.Batch(forceResyncCmd(a.service, a.currentView), spinnerTickCmd())
 	case "1":
 		return a.switchView(github.ViewUnread)
 	case "2":
