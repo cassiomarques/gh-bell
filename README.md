@@ -18,16 +18,19 @@ gh bell
 
 ### Authentication
 
-By default, gh-bell inherits authentication from `gh auth login` via the [go-gh](https://github.com/cli/go-gh) library.
+gh-bell requires a [classic GitHub Personal Access Token (PAT)](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens#creating-a-personal-access-token-classic) with `notifications` and `repo` scopes. GitHub's Notifications API returns persistent 502 errors when called with the OAuth tokens issued by `gh auth login`.
 
-If you encounter persistent 502/504 errors from the Notifications API (a known issue with some OAuth tokens), use a [classic GitHub PAT](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens#creating-a-personal-access-token-classic) with `notifications` and `repo` scopes:
+1. [Create a classic PAT](https://github.com/settings/tokens/new) — select `notifications` and `repo` scopes
+2. Export it in your shell profile (e.g. `~/.zshrc` or `~/.bashrc`):
 
 ```bash
-# Set the token for a single run
-GH_BELL_TOKEN=ghp_your_token gh bell
-
-# Or export it in your shell profile
 export GH_BELL_TOKEN=ghp_your_token
+```
+
+3. Run:
+
+```bash
+gh bell
 ```
 
 Token resolution order: `GH_BELL_TOKEN` → `GH_TOKEN` → `GITHUB_TOKEN` → `gh auth login` keyring.
