@@ -59,6 +59,7 @@ Environment variables `GH_BELL_TOKEN`, `GH_BELL_REFRESH`, and `GH_BELL_CLEANUP_D
 - **Rich filtering** — repo (`/`), title search (`s`), reason (`f`), type (`t`), org (`o`), age (`a`), state (`x`), participating (`p`) — all combinable
 - **Full-text search** — `S` searches notification titles, bodies, comments, labels, and more using [Bleve](https://blevesearch.com/)
 - **Actions** — `r` mark read, `R` mark all visible, `m` mute, `M` mute all visible, `u` unsubscribe
+- **Multi-select** — `Space` to toggle selection on individual items, then `r`/`m` act on all selected at once
 - **Open in browser** — `Enter` opens the notification and marks it as read
 - **Preview pane** — shows notification details with markdown rendering (via [glamour](https://github.com/charmbracelet/glamour))
 - **Local persistence** — SQLite cache for fast startup + persistent mutes; Bleve index for offline full-text search
@@ -89,12 +90,15 @@ Environment variables `GH_BELL_TOKEN`, `GH_BELL_REFRESH`, and `GH_BELL_CLEANUP_D
 
 | Key | Action |
 |-----|--------|
+| `Space` | Toggle select (multi-select) |
 | `Enter` | Open in browser (also marks as read) |
-| `r` | Mark as read |
+| `r` | Mark as read (or all selected) |
 | `R` | Mark all visible as read |
-| `m` | Mute thread |
+| `m` | Mute thread (or all selected) |
 | `M` | Mute all visible |
 | `u` | Unsubscribe |
+
+> When items are selected with `Space`, `r` and `m` act on the selection instead of the cursor item. `Esc` clears the selection.
 
 ### Filters & Views
 

@@ -47,6 +47,7 @@ func newTestApp() App {
 		width:       120,
 		height:      24,
 		detailCache: make(map[string]*github.ThreadDetail),
+		selected:    make(map[string]bool),
 	}
 	a.notifications = sampleNotifications()
 	a.collectFilterOptions()
@@ -2069,5 +2070,118 @@ func TestStateFilterIndicator(t *testing.T) {
 	rendered := a.renderFilters()
 	if !strings.Contains(rendered, "state:merged") {
 		t.Errorf("expected filter indicator to contain 'state:merged', got: %q", rendered)
+	}
+}
+
+func TestMultiSelect_SpaceToggles(t *testing.T) {
+	a := newTestApp()
+	// cursor starts at 0 (ID="1")
+	if len(a.selected) != 0 {
+		t.Fatal("expected no selections initially")
+	}
+
+	// Space selects current item and moves cursor down
+	a.selected[a.notifications[0].ID] = true
+	a.cursor++
+	if !a.selected["1"] {
+		t.Error("expected ID=1 to be selected")
+	}
+	if a.cursor != 1 {
+		t.Errorf("cursor should be 1 after space, got %d", a.cursor)
+	}
+
+	// Space again selects second item
+	a.selected[a.notifications[1].ID] = true
+	a.cursor++
+	if len(a.selected) != 2 {
+		t.Errorf("expected 2 selected, got %d", len(a.selected))
+	}
+
+	// Toggle off first item
+	delete(a.selected, "1")
+	if a.selected["1"] {
+		t.Error("expected ID=1 to be deselected")
+	}
+	if len(a.selected) != 1 {
+		t.Errorf("expected 1 selected after deselect, got %d", len(a.selected))
+	}
+}
+
+func TestMultiSelect_EscClearsSelection(t *testing.T) {
+	a := newTestApp()
+	a.selected["1"] = true
+	a.selected["2"] = true
+
+	if len(a.selected) != 2 {
+		t.Fatal("expected 2 selected")
+	}
+
+	// Esc should clear selection first (before clearing filters)
+	a.selected = make(map[string]bool)
+	if len(a.selected) != 0 {
+		t.Error("expected selection cleared after Esc")
+	}
+}
+
+func TestMultiSelect_SelectedNotifications(t *testing.T) {
+	a := newTestApp()
+	a.selected["1"] = true
+	a.selected["3"] = true
+
+	sel := a.selectedNotifications()
+	if len(sel) != 2 {
+		t.Fatalf("expected 2 selected notifications, got %d", len(sel))
+	}
+	// Should preserve filtered order
+	ids := make(map[string]bool)
+	for _, n := range sel {
+		ids[n.ID] = true
+	}
+	if !ids["1"] || !ids["3"] {
+		t.Errorf("expected IDs 1 and 3 in selection, got %v", ids)
+	}
+}
+
+func TestMultiSelect_SelectionCountInStatusBar(t *testing.T) {
+	a := newTestApp()
+	a.width = 200
+	a.height = 40
+
+	// No selection — no "selected" text
+	bar := a.renderStatusBar()
+	if strings.Contains(bar, "selected") {
+		t.Errorf("should not show 'selected' when nothing is selected, got: %q", bar)
+	}
+
+	// With selection — shows count
+	a.selected["1"] = true
+	a.selected["2"] = true
+	bar = a.renderStatusBar()
+	if !strings.Contains(bar, "2 selected") {
+		t.Errorf("expected '2 selected' in status bar, got: %q", bar)
+	}
+}
+
+func TestMultiSelect_CheckmarkInRow(t *testing.T) {
+	a := newTestApp()
+	a.width = 120
+
+	// Non-selected, non-cursor row — no checkmark
+	row := a.renderNotificationRowSized(a.notifications[0], false, 120)
+	if strings.Contains(row, "✓") {
+		t.Error("non-selected row should not have ✓")
+	}
+
+	// Selected, non-cursor row — shows checkmark
+	a.selected["1"] = true
+	row = a.renderNotificationRowSized(a.notifications[0], false, 120)
+	if !strings.Contains(row, "✓") {
+		t.Error("selected row should have ✓")
+	}
+
+	// Selected + cursor row — shows checkmark instead of ▌
+	row = a.renderNotificationRowSized(a.notifications[0], true, 120)
+	if !strings.Contains(row, "✓") {
+		t.Error("selected cursor row should have ✓")
 	}
 }

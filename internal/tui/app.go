@@ -108,6 +108,9 @@ type App struct {
 	// New notification tracking (set on each refresh)
 	newNotificationIDs map[string]bool
 
+	// Multi-select
+	selected map[string]bool // notification IDs currently selected
+
 	// Full-text search results (thread IDs matching the last Bleve query)
 	searchResultIDs map[string]bool
 	searchQuery     string // active search query text
@@ -167,6 +170,7 @@ func NewApp(client github.NotificationAPI, opts ...Option) App {
 		currentView: github.ViewUnread,
 		loading:     true,
 		detailCache: make(map[string]*github.ThreadDetail),
+		selected:    make(map[string]bool),
 	}
 	for _, opt := range opts {
 		opt(&a)
@@ -553,6 +557,11 @@ func (a App) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			a.focused = focusList
 			return a, nil
 		}
+		// Clear multi-selection first
+		if len(a.selected) > 0 {
+			a.selected = make(map[string]bool)
+			return a, nil
+		}
 		// Clear all filters
 		if a.hasActiveFilters() {
 			a.repoFilter = ""
@@ -765,7 +774,27 @@ func (a App) handleListKey(key string) (tea.Model, tea.Cmd) {
 		return a, a.maybeFetchDetail()
 
 	// Actions
+	case " ":
+		// Toggle selection on current notification and move cursor down
+		if n := a.selectedNotification(); n != nil {
+			if a.selected[n.ID] {
+				delete(a.selected, n.ID)
+			} else {
+				a.selected[n.ID] = true
+			}
+			a.cursor++
+			a.clampCursor()
+		}
+		return a, nil
 	case "r":
+		// If items are selected, mark them all as read; otherwise mark cursor item
+		if len(a.selected) > 0 {
+			sel := a.selectedNotifications()
+			a.statusText = fmt.Sprintf("Marking %d as read…", len(sel))
+			a.statusError = false
+			a.selected = make(map[string]bool)
+			return a, markVisibleReadCmd(a.client, a.service, sel)
+		}
 		if n := a.selectedNotification(); n != nil {
 			return a, markReadCmd(a.client, a.service, n.ID)
 		}
@@ -781,6 +810,14 @@ func (a App) handleListKey(key string) (tea.Model, tea.Cmd) {
 		a.statusError = false
 		return a, markVisibleReadCmd(a.client, a.service, filtered)
 	case "m":
+		// If items are selected, mute them all; otherwise mute cursor item
+		if len(a.selected) > 0 {
+			sel := a.selectedNotifications()
+			a.statusText = fmt.Sprintf("Muting %d…", len(sel))
+			a.statusError = false
+			a.selected = make(map[string]bool)
+			return a, muteVisibleCmd(a.client, a.service, sel)
+		}
 		if n := a.selectedNotification(); n != nil {
 			return a, muteThreadCmd(a.client, a.service, n.ID, n.Repository.FullName, n.Subject.Title)
 		}
@@ -1289,12 +1326,13 @@ func (a App) renderNotificationListSized(notifications []github.Notification, he
 	return strings.Join(rows, "\n")
 }
 
-func (a App) renderNotificationRowSized(n github.Notification, selected bool, width int) string {
+func (a App) renderNotificationRowSized(n github.Notification, isCursor bool, width int) string {
 	icon := n.Icon()
 	reason := truncate(n.ReasonLabel(), 10)
 	repo := truncate(n.Repository.FullName, 24)
 	ago := timeAgo(n.UpdatedAt)
 	isNew := a.newNotificationIDs[n.ID]
+	isSelected := a.selected[n.ID]
 
 	// Fixed column widths: icon(1) + gap(1) + reason(10) + gap(1) + repo(24) + gap(1) + title(flex) + gap(1) + ago(5)
 	const iconW, reasonW, repoW, agoW, padding = 1, 10, 24, 5, 6
@@ -1304,10 +1342,15 @@ func (a App) renderNotificationRowSized(n github.Notification, selected bool, wi
 	}
 	title := truncate(n.Subject.Title, titleWidth)
 
-	if selected {
-		// For selected rows, build plain padded text and let the row style
+	if isCursor {
+		// For cursor rows, build plain padded text and let the row style
 		// apply background uniformly — no per-column styling that creates gaps.
-		row := fmt.Sprintf("▌%s %s %s %s %s",
+		mark := "▌"
+		if isSelected {
+			mark = "✓"
+		}
+		row := fmt.Sprintf("%s%s %s %s %s %s",
+			mark,
 			icon,
 			padRight(reason, reasonW),
 			padRight(repo, repoW),
@@ -1322,9 +1365,11 @@ func (a App) renderNotificationRowSized(n github.Notification, selected bool, wi
 			Render(row)
 	}
 
-	// Non-selected: show • for new notifications, space for old
+	// Non-cursor: show ✓ for selected, • for new, space for others
 	prefix := " "
-	if isNew {
+	if isSelected {
+		prefix = "✓"
+	} else if isNew {
 		prefix = "•"
 	}
 
@@ -1384,12 +1429,13 @@ func (a App) renderNotificationList(notifications []github.Notification, height 
 	return strings.Join(rows, "\n")
 }
 
-func (a App) renderNotificationRow(n github.Notification, selected bool) string {
+func (a App) renderNotificationRow(n github.Notification, isCursor bool) string {
 	icon := n.Icon()
 	reason := truncate(n.ReasonLabel(), 10)
 	repo := truncate(n.Repository.FullName, 28)
 	ago := timeAgo(n.UpdatedAt)
 	isNew := a.newNotificationIDs[n.ID]
+	isSelected := a.selected[n.ID]
 
 	// Fixed column widths: icon(1) + gap(1) + reason(10) + gap(1) + repo(28) + gap(1) + title(flex) + gap(1) + ago(5)
 	const iconW, reasonW, repoW, agoW, padding = 1, 10, 28, 5, 6
@@ -1399,8 +1445,13 @@ func (a App) renderNotificationRow(n github.Notification, selected bool) string 
 	}
 	title := truncate(n.Subject.Title, titleWidth)
 
-	if selected {
-		row := fmt.Sprintf("▌%s %s %s %s %s",
+	if isCursor {
+		mark := "▌"
+		if isSelected {
+			mark = "✓"
+		}
+		row := fmt.Sprintf("%s%s %s %s %s %s",
+			mark,
 			icon,
 			padRight(reason, reasonW),
 			padRight(repo, repoW),
@@ -1416,7 +1467,9 @@ func (a App) renderNotificationRow(n github.Notification, selected bool) string 
 	}
 
 	prefix := " "
-	if isNew {
+	if isSelected {
+		prefix = "✓"
+	} else if isNew {
 		prefix = "•"
 	}
 
@@ -1544,6 +1597,13 @@ func (a App) renderStatusBar() string {
 	}
 	countStyled := lipgloss.NewStyle().Foreground(theme.ColorLavender).Bold(true).Render(countStr)
 
+	// Show selection count when items are multi-selected
+	if len(a.selected) > 0 {
+		selStr := fmt.Sprintf("  %d selected", len(a.selected))
+		selStyled := lipgloss.NewStyle().Foreground(theme.ColorPeach).Bold(true).Render(selStr)
+		countStyled += selStyled
+	}
+
 	if left != "" {
 		left = left + "  " + countStyled
 	} else {
@@ -1656,6 +1716,21 @@ func (a App) selectedNotification() *github.Notification {
 	}
 	n := filtered[a.cursor]
 	return &n
+}
+
+// selectedNotifications returns the notifications whose IDs are in the
+// multi-select set, preserving the order from the filtered list.
+func (a App) selectedNotifications() []github.Notification {
+	if len(a.selected) == 0 {
+		return nil
+	}
+	var result []github.Notification
+	for _, n := range a.filteredNotifications() {
+		if a.selected[n.ID] {
+			result = append(result, n)
+		}
+	}
+	return result
 }
 
 func (a *App) removeNotification(threadID string) {
@@ -2008,13 +2083,15 @@ func (a App) renderHelpOverlay() string {
 
 	b.WriteString(heading.Render("Actions"))
 	b.WriteByte('\n')
+	b.WriteString(line("Space", "Toggle select (multi-select)"))
+	b.WriteByte('\n')
 	b.WriteString(line("Enter", "Open in browser"))
 	b.WriteByte('\n')
-	b.WriteString(line("r", "Mark as read"))
+	b.WriteString(line("r", "Mark as read (or selected)"))
 	b.WriteByte('\n')
 	b.WriteString(line("R", "Mark all visible as read"))
 	b.WriteByte('\n')
-	b.WriteString(line("m", "Mute thread"))
+	b.WriteString(line("m", "Mute thread (or selected)"))
 	b.WriteByte('\n')
 	b.WriteString(line("M", "Mute all visible"))
 	b.WriteByte('\n')
