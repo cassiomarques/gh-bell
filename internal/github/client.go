@@ -207,3 +207,12 @@ func stripAPIHost(url string) string {
 	}
 	return ""
 }
+
+// GetCurrentUser fetches the authenticated user's login name.
+func (c *Client) GetCurrentUser() (string, error) {
+	var user User
+	if err := c.rest.Get("user", &user); err != nil {
+		return "", fmt.Errorf("fetching current user: %w", err)
+	}
+	return user.Login, nil
+}

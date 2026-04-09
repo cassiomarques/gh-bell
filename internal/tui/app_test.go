@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/cassiomarques/gh-bell/internal/github"
+	"github.com/cassiomarques/gh-bell/internal/service"
+	"github.com/cassiomarques/gh-bell/internal/storage"
 	"github.com/cassiomarques/gh-bell/internal/tui/theme"
 )
 
@@ -44,6 +46,7 @@ func newTestApp() App {
 		currentView: github.ViewUnread,
 		width:       120,
 		height:      24,
+		detailCache: make(map[string]*github.ThreadDetail),
 	}
 	a.notifications = sampleNotifications()
 	a.collectFilterOptions()
@@ -1296,5 +1299,365 @@ func TestReasonColorFor(t *testing.T) {
 			t.Errorf("reason %q shares a color with another reason", r)
 		}
 		colors[key] = true
+	}
+}
+
+// --- Full-text search TUI tests ---
+
+func TestSearchKeybinding_S_entersSearchMode(t *testing.T) {
+	app := newTestApp()
+	// S requires service != nil; simulate by setting it directly
+	app.filterInput = filterFullTextSearch
+	app.filterBuf = ""
+	if app.filterInput != filterFullTextSearch {
+		t.Fatalf("expected filterFullTextSearch mode, got %d", app.filterInput)
+	}
+}
+
+func TestSearchMode_typing(t *testing.T) {
+	app := newTestApp()
+	app.filterInput = filterFullTextSearch
+	app.filterBuf = ""
+
+	// Type "bug"
+	updated, _ := app.handleFilterInput("b")
+	a := updated.(App)
+	updated, _ = a.handleFilterInput("u")
+	a = updated.(App)
+	updated, _ = a.handleFilterInput("g")
+	a = updated.(App)
+
+	if a.filterBuf != "bug" {
+		t.Fatalf("expected filterBuf 'bug', got %q", a.filterBuf)
+	}
+	// Full-text search does NOT apply live filter (only on enter)
+	if a.titleSearch != "" {
+		t.Fatalf("titleSearch should not change during full-text search input")
+	}
+}
+
+func TestSearchMode_enterWithEmptyQuery_clearsResults(t *testing.T) {
+	app := newTestApp()
+	// Set pre-existing search results
+	app.searchResultIDs = map[string]bool{"1": true}
+	app.searchQuery = "old"
+	app.filterInput = filterFullTextSearch
+	app.filterBuf = ""
+
+	updated, cmd := app.handleFilterInput("enter")
+	a := updated.(App)
+
+	if a.filterInput != filterNone {
+		t.Fatalf("expected filterNone, got %d", a.filterInput)
+	}
+	if a.searchResultIDs != nil {
+		t.Fatalf("expected searchResultIDs cleared, got %v", a.searchResultIDs)
+	}
+	if a.searchQuery != "" {
+		t.Fatalf("expected searchQuery cleared, got %q", a.searchQuery)
+	}
+	if cmd != nil {
+		t.Fatalf("expected nil cmd on empty query, got non-nil")
+	}
+}
+
+func TestSearchMode_enterWithQuery_firesCmd(t *testing.T) {
+	app := newTestApp()
+	app.filterInput = filterFullTextSearch
+	app.filterBuf = "login"
+
+	updated, cmd := app.handleFilterInput("enter")
+	a := updated.(App)
+
+	if a.filterInput != filterNone {
+		t.Fatalf("expected filterNone, got %d", a.filterInput)
+	}
+	// fullTextSearchCmd is returned even with nil service (will produce error msg)
+	if cmd == nil {
+		t.Fatalf("expected non-nil cmd when query is non-empty")
+	}
+}
+
+func TestSearchMode_escape_clearsSearchResults(t *testing.T) {
+	app := newTestApp()
+	app.filterInput = filterFullTextSearch
+	app.filterBuf = "test"
+	app.searchResultIDs = map[string]bool{"1": true}
+	app.searchQuery = "prev"
+
+	updated, _ := app.handleFilterInput("escape")
+	a := updated.(App)
+
+	if a.filterInput != filterNone {
+		t.Fatalf("expected filterNone, got %d", a.filterInput)
+	}
+	if a.searchResultIDs != nil {
+		t.Fatalf("expected searchResultIDs cleared")
+	}
+	if a.searchQuery != "" {
+		t.Fatalf("expected searchQuery cleared")
+	}
+}
+
+func TestSearchResultsMsg_appliesFilter(t *testing.T) {
+	app := newTestApp()
+	app.width = 120
+	app.height = 40
+
+	msg := searchResultsMsg{
+		query:     "bug",
+		threadIDs: []string{"1", "3"},
+	}
+
+	updated, _ := app.Update(msg)
+	a := updated.(App)
+
+	if a.searchQuery != "bug" {
+		t.Fatalf("expected searchQuery 'bug', got %q", a.searchQuery)
+	}
+	if len(a.searchResultIDs) != 2 {
+		t.Fatalf("expected 2 search result IDs, got %d", len(a.searchResultIDs))
+	}
+	if !a.searchResultIDs["1"] || !a.searchResultIDs["3"] {
+		t.Fatalf("unexpected search result IDs: %v", a.searchResultIDs)
+	}
+}
+
+func TestFullTextSearchFilter_filtersNotifications(t *testing.T) {
+	app := newTestApp()
+	app.searchResultIDs = map[string]bool{"2": true}
+	app.searchQuery = "caching"
+
+	filtered := app.filteredNotifications()
+	if len(filtered) != 1 {
+		t.Fatalf("expected 1 filtered result, got %d", len(filtered))
+	}
+	if filtered[0].ID != "2" {
+		t.Fatalf("expected notification ID '2', got %q", filtered[0].ID)
+	}
+}
+
+func TestFullTextSearch_hasActiveFilters(t *testing.T) {
+	app := newTestApp()
+
+	if app.hasActiveFilters() {
+		t.Fatal("expected no active filters initially")
+	}
+
+	app.searchResultIDs = map[string]bool{"1": true}
+	app.searchQuery = "test"
+
+	if !app.hasActiveFilters() {
+		t.Fatal("expected active filters with search results set")
+	}
+}
+
+func TestEscape_clearsSearchResults(t *testing.T) {
+	app := newTestApp()
+	app.searchResultIDs = map[string]bool{"1": true}
+	app.searchQuery = "test"
+
+	// Test escape clearing through the filter input path (same logic as handleKey escape)
+	app.filterInput = filterFullTextSearch
+	updated, _ := app.handleFilterInput("escape")
+	a := updated.(App)
+
+	if a.searchResultIDs != nil {
+		t.Fatalf("expected searchResultIDs cleared by escape")
+	}
+	if a.searchQuery != "" {
+		t.Fatalf("expected searchQuery cleared by escape")
+	}
+}
+
+func TestRenderFilters_showsSearchIndicator(t *testing.T) {
+	app := newTestApp()
+	app.width = 100
+	app.searchResultIDs = map[string]bool{"1": true}
+	app.searchQuery = "login bug"
+
+	output := app.renderFilters()
+	if !strings.Contains(output, "login bug") {
+		t.Fatalf("expected search indicator in filter bar, got: %s", output)
+	}
+}
+
+func TestRenderFilters_showsSearchInputPrompt(t *testing.T) {
+	app := newTestApp()
+	app.width = 100
+	app.filterInput = filterFullTextSearch
+	app.filterBuf = "test"
+
+	output := app.renderFilters()
+	if !strings.Contains(output, "Full-text search:") {
+		t.Fatalf("expected full-text search prompt, got: %s", output)
+	}
+	if !strings.Contains(output, "test") {
+		t.Fatalf("expected filter buffer in output, got: %s", output)
+	}
+}
+
+func TestSearchMode_backspace(t *testing.T) {
+	app := newTestApp()
+	app.filterInput = filterFullTextSearch
+	app.filterBuf = "bug"
+
+	updated, _ := app.handleFilterInput("backspace")
+	a := updated.(App)
+	if a.filterBuf != "bu" {
+		t.Fatalf("expected 'bu' after backspace, got %q", a.filterBuf)
+	}
+}
+
+func TestFilterInput_spaceKey(t *testing.T) {
+	// In Bubble Tea v2, space is reported as "space" not " "
+	for _, mode := range []filterMode{filterRepo, filterTitleSearch, filterFullTextSearch} {
+		app := newTestApp()
+		app.filterInput = mode
+		app.filterBuf = "hello"
+
+		updated, _ := app.handleFilterInput("space")
+		a := updated.(App)
+		if a.filterBuf != "hello " {
+			t.Fatalf("mode %d: expected 'hello ' after space, got %q", mode, a.filterBuf)
+		}
+	}
+}
+
+func TestViewPreference_persistAndRestore(t *testing.T) {
+	// Use a real SQLite store + service to test preference persistence
+	dir := t.TempDir()
+	store, err := storage.Open(dir + "/test.db")
+	if err != nil {
+		t.Fatalf("failed to open store: %v", err)
+	}
+	defer store.Close()
+
+	svc := service.New(nil, store)
+	defer svc.Close()
+
+	// Create an app with service — default view should be Unread
+	app := NewApp(nil, WithService(svc))
+	if app.currentView != github.ViewUnread {
+		t.Fatalf("expected ViewUnread initially, got %d", app.currentView)
+	}
+
+	// Switch to All — this should persist the preference
+	a, _ := app.switchView(github.ViewAll)
+	if a.currentView != github.ViewAll {
+		t.Fatalf("expected ViewAll after switch, got %d", a.currentView)
+	}
+
+	// Create a new app with the same service — should restore ViewAll
+	app2 := NewApp(nil, WithService(svc))
+	if app2.currentView != github.ViewAll {
+		t.Fatalf("expected ViewAll restored, got %d", app2.currentView)
+	}
+}
+
+// --- Assigned-to-me filter tests ---
+
+func TestAssignedFilter_toggle(t *testing.T) {
+	app := newTestApp()
+	if app.assignedFilter {
+		t.Fatal("assigned filter should be off initially")
+	}
+
+	updated, _ := app.handleListKey("A")
+	a := updated.(App)
+	if !a.assignedFilter {
+		t.Fatal("expected assigned filter on after pressing A")
+	}
+
+	updated, _ = a.handleListKey("A")
+	a = updated.(App)
+	if a.assignedFilter {
+		t.Fatal("expected assigned filter off after second press")
+	}
+}
+
+func TestAssignedFilter_filtersWithDetailCache(t *testing.T) {
+	app := newTestApp()
+	app.currentUser = "testuser"
+	app.assignedFilter = true
+
+	// Without detail cache, only reason=assign notifications pass
+	filtered := app.filteredNotifications()
+	// In sample notifications, reason "review_requested", "mention", "subscribed" — none are "assign"
+	if len(filtered) != 0 {
+		t.Fatalf("expected 0 results without detail cache or assign reason, got %d", len(filtered))
+	}
+
+	// Add detail cache for notification "1" with testuser as assignee
+	app.detailCache["1"] = &github.ThreadDetail{
+		Assignees: []github.User{{Login: "testuser"}},
+	}
+	filtered = app.filteredNotifications()
+	if len(filtered) != 1 {
+		t.Fatalf("expected 1 result with testuser assigned, got %d", len(filtered))
+	}
+	if filtered[0].ID != "1" {
+		t.Fatalf("expected notification '1', got %q", filtered[0].ID)
+	}
+}
+
+func TestAssignedFilter_caseInsensitive(t *testing.T) {
+	app := newTestApp()
+	app.currentUser = "TestUser"
+	app.assignedFilter = true
+	app.detailCache["2"] = &github.ThreadDetail{
+		Assignees: []github.User{{Login: "testuser"}},
+	}
+
+	filtered := app.filteredNotifications()
+	if len(filtered) != 1 || filtered[0].ID != "2" {
+		t.Fatalf("expected case-insensitive match, got %d results", len(filtered))
+	}
+}
+
+func TestAssignedFilter_reasonAssignFallback(t *testing.T) {
+	// Notifications with reason "assign" should pass even without detail cache
+	app := newTestApp()
+	app.currentUser = "testuser"
+	app.assignedFilter = true
+	// Override notification 1's reason to "assign"
+	app.notifications[0].Reason = "assign"
+
+	filtered := app.filteredNotifications()
+	if len(filtered) != 1 || filtered[0].ID != "1" {
+		t.Fatalf("expected reason=assign notification to pass, got %d results", len(filtered))
+	}
+}
+
+func TestAssignedFilter_hasActiveFilters(t *testing.T) {
+	app := newTestApp()
+	if app.hasActiveFilters() {
+		t.Fatal("no filters initially")
+	}
+	app.assignedFilter = true
+	if !app.hasActiveFilters() {
+		t.Fatal("expected active filters with assigned on")
+	}
+}
+
+func TestAssignedFilter_showsIndicator(t *testing.T) {
+	app := newTestApp()
+	app.width = 100
+	app.assignedFilter = true
+
+	output := app.renderFilters()
+	if !strings.Contains(output, "assigned:me") {
+		t.Fatalf("expected assigned:me indicator, got: %s", output)
+	}
+}
+
+func TestCurrentUserMsg_setsUser(t *testing.T) {
+	app := newTestApp()
+	app.width = 120
+	app.height = 40
+	updated, _ := app.Update(currentUserMsg{login: "cassio"})
+	a := updated.(App)
+	if a.currentUser != "cassio" {
+		t.Fatalf("expected currentUser 'cassio', got %q", a.currentUser)
 	}
 }

@@ -3,12 +3,14 @@ package tui
 import (
 	"fmt"
 	"log"
+	"strconv"
 	"strings"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/cassiomarques/gh-bell/internal/github"
+	"github.com/cassiomarques/gh-bell/internal/service"
 	"github.com/cassiomarques/gh-bell/internal/tui/theme"
 )
 
@@ -27,6 +29,7 @@ const (
 	filterNone filterMode = iota
 	filterRepo
 	filterTitleSearch
+	filterFullTextSearch // Bleve-powered full-text search
 )
 
 // participatingReasons are the GitHub notification reasons that indicate
@@ -53,7 +56,8 @@ var spinnerFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "�
 // This makes the app predictable: given the same state + message, you always
 // get the same result.
 type App struct {
-	client *github.Client
+	client  *github.Client
+	service *service.NotificationService // orchestrates API + SQLite cache
 
 	// Data
 	notifications []github.Notification
@@ -71,15 +75,17 @@ type App struct {
 	showHelp    bool
 
 	// Filters
-	repoFilter    string
-	reasonFilter  string
-	typeFilter    string
-	orgFilter     string
-	ageFilter     int // 0=all, 1=24h, 2=7d, 3=30d
-	titleSearch   string
-	participating bool
-	filterInput   filterMode
-	filterBuf     string
+	repoFilter     string
+	reasonFilter   string
+	typeFilter     string
+	orgFilter      string
+	ageFilter      int // 0=all, 1=24h, 2=7d, 3=30d
+	titleSearch    string
+	participating  bool
+	assignedFilter bool   // show only notifications assigned to current user
+	currentUser    string // authenticated GitHub login (fetched once)
+	filterInput    filterMode
+	filterBuf      string
 
 	// Preview
 	previewScroll  int
@@ -99,6 +105,10 @@ type App struct {
 	// New notification tracking (set on each refresh)
 	newNotificationIDs map[string]bool
 
+	// Full-text search results (thread IDs matching the last Bleve query)
+	searchResultIDs map[string]bool
+	searchQuery     string // active search query text
+
 	// Configurable refresh interval (0 means use default)
 	refreshInterval time.Duration
 
@@ -117,6 +127,13 @@ func WithRefreshInterval(d time.Duration) Option {
 	}
 }
 
+// WithService sets the NotificationService for persistence and caching.
+func WithService(svc *service.NotificationService) Option {
+	return func(a *App) {
+		a.service = svc
+	}
+}
+
 // NewApp creates an App wired to the given GitHub API client.
 func NewApp(client *github.Client, opts ...Option) App {
 	a := App{
@@ -128,6 +145,14 @@ func NewApp(client *github.Client, opts ...Option) App {
 	for _, opt := range opts {
 		opt(&a)
 	}
+	// Restore last view from preferences if persistence is available
+	if a.service != nil {
+		if v := a.service.GetPref("last_view"); v != "" {
+			if n, err := strconv.Atoi(v); err == nil && n >= 0 && n <= 2 {
+				a.currentView = github.View(n)
+			}
+		}
+	}
 	return a
 }
 
@@ -138,10 +163,20 @@ func NewApp(client *github.Client, opts ...Option) App {
 // This is the "entry point" of the Elm Architecture's event loop:
 //   Init → (model, cmd) → runtime executes cmd → msg arrives → Update → View → …
 func (a App) Init() tea.Cmd {
-	return tea.Batch(
-		fetchNotificationsCmd(a.client, a.currentView),
+	cmds := []tea.Cmd{
 		refreshTickCmd(a.getRefreshInterval()),
-	)
+		fetchCurrentUserCmd(a.client),
+	}
+
+	// Two-phase startup when service is available:
+	// 1. Load cached notifications from SQLite (instant)
+	// 2. Fetch fresh from API (background)
+	if a.service != nil {
+		cmds = append(cmds, loadCachedNotificationsCmd(a.service, a.currentView))
+	}
+	cmds = append(cmds, fetchNotificationsCmd(a.client, a.service, a.currentView))
+
+	return tea.Batch(cmds...)
 }
 
 // getRefreshInterval returns the configured refresh interval, or the default.
@@ -244,6 +279,19 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return a, detailCmd
 
+	case cachedNotificationsLoadedMsg:
+		// Show cached data instantly on startup — no "new" indicators,
+		// the API refresh that follows will handle those.
+		if len(a.notifications) == 0 && len(msg.notifications) > 0 {
+			log.Printf("update: cachedNotificationsLoadedMsg with %d notifications", len(msg.notifications))
+			a.notifications = msg.notifications
+			a.loading = true // still loading from API
+			a.collectFilterOptions()
+			a.clampCursor()
+			return a, a.maybeFetchDetail()
+		}
+		return a, nil
+
 	case errorMsg:
 		log.Printf("update: errorMsg: %v", msg.err)
 		a.loading = false
@@ -289,7 +337,7 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case refreshTickMsg:
 		a.loading = true
 		return a, tea.Batch(
-			fetchNotificationsCmd(a.client, a.currentView),
+			fetchNotificationsCmd(a.client, a.service, a.currentView),
 			refreshTickCmd(a.getRefreshInterval()),
 		)
 
@@ -317,6 +365,26 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.spinnerFrame = (a.spinnerFrame + 1) % len(spinnerFrames)
 			return a, spinnerTickCmd()
 		}
+		return a, nil
+
+	case searchResultsMsg:
+		a.searchResultIDs = make(map[string]bool, len(msg.threadIDs))
+		for _, id := range msg.threadIDs {
+			a.searchResultIDs[id] = true
+		}
+		a.searchQuery = msg.query
+		a.cursor = 0
+		a.offset = 0
+		if len(msg.threadIDs) == 0 && msg.query != "" {
+			a.statusText = "No results"
+			a.statusError = false
+			return a, clearStatusCmd()
+		}
+		return a, nil
+
+	case currentUserMsg:
+		a.currentUser = msg.login
+		log.Printf("update: current user set to %q", msg.login)
 		return a, nil
 	}
 
@@ -351,7 +419,7 @@ func (a App) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		a.loading = true
 		a.statusText = ""
 		a.statusError = false
-		return a, fetchNotificationsCmd(a.client, a.currentView)
+		return a, fetchNotificationsCmd(a.client, a.service, a.currentView)
 	case "1":
 		return a.switchView(github.ViewUnread)
 	case "2":
@@ -373,6 +441,14 @@ func (a App) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		a.filterInput = filterTitleSearch
 		a.filterBuf = a.titleSearch
 		return a, nil
+	case "S":
+		// Full-text search (Bleve-powered) — searches titles, bodies, comments, labels
+		if a.service != nil {
+			a.filterInput = filterFullTextSearch
+			a.filterBuf = a.searchQuery
+			return a, nil
+		}
+		// No service → fall through (search not available)
 	case "f":
 		if a.focused == focusList {
 			a.cycleReasonFilter()
@@ -390,6 +466,9 @@ func (a App) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			a.ageFilter = 0
 			a.titleSearch = ""
 			a.participating = false
+			a.assignedFilter = false
+			a.searchResultIDs = nil
+			a.searchQuery = ""
 			a.cursor = 0
 			a.offset = 0
 			return a, nil
@@ -409,8 +488,17 @@ func (a App) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 func (a App) handleFilterInput(key string) (tea.Model, tea.Cmd) {
 	switch key {
 	case "enter":
-		// Confirm filter and exit filter mode
+		mode := a.filterInput
 		a.filterInput = filterNone
+		// For full-text search, fire the search command on confirm
+		if mode == filterFullTextSearch {
+			if a.filterBuf == "" {
+				a.searchResultIDs = nil
+				a.searchQuery = ""
+				return a, nil
+			}
+			return a, fullTextSearchCmd(a.service, a.filterBuf)
+		}
 		return a, nil
 	case "escape", "esc":
 		// Cancel: clear the active filter and exit
@@ -419,6 +507,9 @@ func (a App) handleFilterInput(key string) (tea.Model, tea.Cmd) {
 			a.repoFilter = ""
 		case filterTitleSearch:
 			a.titleSearch = ""
+		case filterFullTextSearch:
+			a.searchResultIDs = nil
+			a.searchQuery = ""
 		}
 		a.filterBuf = ""
 		a.filterInput = filterNone
@@ -430,11 +521,15 @@ func (a App) handleFilterInput(key string) (tea.Model, tea.Cmd) {
 			a.filterBuf = a.filterBuf[:len(a.filterBuf)-1]
 		}
 	default:
-		if len(key) == 1 {
-			a.filterBuf += key
+		if len(key) == 1 || key == "space" {
+			if key == "space" {
+				a.filterBuf += " "
+			} else {
+				a.filterBuf += key
+			}
 		}
 	}
-	// Live filter: apply as user types
+	// Live filter: apply as user types (except full-text which waits for enter)
 	switch a.filterInput {
 	case filterRepo:
 		a.repoFilter = a.filterBuf
@@ -518,17 +613,17 @@ func (a App) handleListKey(key string) (tea.Model, tea.Cmd) {
 	// Actions
 	case "r":
 		if n := a.selectedNotification(); n != nil {
-			return a, markReadCmd(a.client, n.ID)
+			return a, markReadCmd(a.client, a.service, n.ID)
 		}
 	case "R":
-		return a, markAllReadCmd(a.client)
+		return a, markAllReadCmd(a.client, a.service)
 	case "m":
 		if n := a.selectedNotification(); n != nil {
-			return a, muteThreadCmd(a.client, n.ID)
+			return a, muteThreadCmd(a.client, a.service, n.ID, n.Repository.FullName, n.Subject.Title)
 		}
 	case "u":
 		if n := a.selectedNotification(); n != nil {
-			return a, unsubscribeCmd(a.client, n.ID)
+			return a, unsubscribeCmd(a.client, a.service, n.ID)
 		}
 
 	// Filters (cycling)
@@ -552,6 +647,11 @@ func (a App) handleListKey(key string) (tea.Model, tea.Cmd) {
 		a.cursor = 0
 		a.offset = 0
 		return a, nil
+	case "A":
+		a.assignedFilter = !a.assignedFilter
+		a.cursor = 0
+		a.offset = 0
+		return a, nil
 
 	case "enter":
 		if n := a.selectedNotification(); n != nil {
@@ -560,7 +660,7 @@ func (a App) handleListKey(key string) (tea.Model, tea.Cmd) {
 				// Open in browser and mark as read simultaneously
 				cmds := []tea.Cmd{openBrowserCmd(webURL)}
 				if n.Unread {
-					cmds = append(cmds, markReadCmd(a.client, n.ID))
+					cmds = append(cmds, markReadCmd(a.client, a.service, n.ID))
 				}
 				return a, tea.Batch(cmds...)
 			}
@@ -580,7 +680,11 @@ func (a App) switchView(view github.View) (App, tea.Cmd) {
 	a.cursor = 0
 	a.offset = 0
 	a.loading = true
-	return a, fetchNotificationsCmd(a.client, view)
+	// Persist the view preference so it's restored on next launch
+	if a.service != nil {
+		_ = a.service.SetPref("last_view", fmt.Sprintf("%d", view))
+	}
+	return a, fetchNotificationsCmd(a.client, a.service, view)
 }
 
 // View renders the entire UI. In the Elm Architecture, View is a pure function
@@ -691,6 +795,12 @@ func (a App) renderFilters() string {
 		input := lipgloss.NewStyle().Foreground(theme.ColorText).Render(a.filterBuf + "▏")
 		return lipgloss.NewStyle().Width(a.width).Render(prompt + input)
 	}
+	if a.filterInput == filterFullTextSearch {
+		prompt := lipgloss.NewStyle().Foreground(theme.ColorGreen).Bold(true).Render("  Full-text search: ")
+		input := lipgloss.NewStyle().Foreground(theme.ColorText).Render(a.filterBuf + "▏")
+		hint := lipgloss.NewStyle().Foreground(theme.Dimmed).Render("  (Enter to search)")
+		return lipgloss.NewStyle().Width(a.width).Render(prompt + input + hint)
+	}
 
 	var parts []string
 	if a.repoFilter != "" {
@@ -713,6 +823,12 @@ func (a App) renderFilters() string {
 	}
 	if a.titleSearch != "" {
 		parts = append(parts, fmt.Sprintf("search:%s", a.titleSearch))
+	}
+	if len(a.searchResultIDs) > 0 {
+		parts = append(parts, fmt.Sprintf("🔍%s", a.searchQuery))
+	}
+	if a.assignedFilter {
+		parts = append(parts, "assigned:me")
 	}
 	label := strings.Join(parts, "  ")
 	hint := lipgloss.NewStyle().Foreground(theme.Dimmed).Render("  (Esc to clear)")
@@ -1234,6 +1350,31 @@ func (a App) filteredNotifications() []github.Notification {
 		) {
 			continue
 		}
+		// Full-text search filter: only show notifications matching Bleve results
+		if len(a.searchResultIDs) > 0 && !a.searchResultIDs[n.ID] {
+			continue
+		}
+		// Assigned-to-me filter: check thread detail's assignees list
+		if a.assignedFilter && a.currentUser != "" {
+			detail := a.detailCache[n.ID]
+			if detail == nil {
+				// Also check if notification reason is "assign" as a fallback
+				if n.Reason != "assign" {
+					continue
+				}
+			} else {
+				assigned := false
+				for _, u := range detail.Assignees {
+					if strings.EqualFold(u.Login, a.currentUser) {
+						assigned = true
+						break
+					}
+				}
+				if !assigned && n.Reason != "assign" {
+					continue
+				}
+			}
+		}
 		result = append(result, n)
 	}
 	return result
@@ -1386,11 +1527,18 @@ func (a *App) collectFilterOptions() {
 // currently selected notification, or nil if already cached/loading.
 func (a *App) maybeFetchDetail() tea.Cmd {
 	n := a.selectedNotification()
-	if n == nil || a.client == nil {
+	if n == nil || (a.client == nil && a.service == nil) {
 		return nil
 	}
 	if _, ok := a.detailCache[n.ID]; ok {
-		return nil // already cached
+		return nil // already in memory
+	}
+	// Check SQLite cache via service before hitting the API
+	if a.service != nil {
+		if detail, ok := a.service.GetCachedDetail(n.ID, n.UpdatedAt); ok {
+			a.detailCache[n.ID] = detail // promote to in-memory cache
+			return nil
+		}
 	}
 	if a.detailLoading == n.ID {
 		return nil // already fetching
@@ -1400,7 +1548,7 @@ func (a *App) maybeFetchDetail() tea.Cmd {
 	// Batch both the fetch command and the spinner tick so the spinner
 	// starts animating immediately while we wait for the API response.
 	return tea.Batch(
-		fetchThreadDetailCmd(a.client, n.ID, n.Subject.URL, n.Subject.LatestCommentURL),
+		fetchThreadDetailCmd(a.client, a.service, n.ID, n.Subject.URL, n.Subject.LatestCommentURL, n),
 		spinnerTickCmd(),
 	)
 }
@@ -1444,7 +1592,8 @@ func (a *App) clampScroll() {
 
 func (a App) hasActiveFilters() bool {
 	return a.repoFilter != "" || a.reasonFilter != "" || a.typeFilter != "" ||
-		a.orgFilter != "" || a.ageFilter != 0 || a.titleSearch != "" || a.participating
+		a.orgFilter != "" || a.ageFilter != 0 || a.titleSearch != "" ||
+		a.participating || a.assignedFilter || len(a.searchResultIDs) > 0
 }
 
 func (a App) contentHeight() int {
@@ -1559,6 +1708,21 @@ func (a App) renderHelpOverlay() string {
 	b.WriteByte('\n')
 	b.WriteString(line("s", "Search titles"))
 	b.WriteByte('\n')
+	b.WriteString(line("S", "Full-text search"))
+	b.WriteByte('\n')
+	b.WriteByte('\n')
+	hintStyle := lipgloss.NewStyle().Foreground(theme.Dimmed).Italic(true)
+	b.WriteString(hintStyle.Render("  Search syntax:"))
+	b.WriteByte('\n')
+	b.WriteString(hintStyle.Render("    foo bar     both words (AND)"))
+	b.WriteByte('\n')
+	b.WriteString(hintStyle.Render("    \"foo bar\"   exact phrase"))
+	b.WriteByte('\n')
+	b.WriteString(hintStyle.Render("    foo OR bar  either word"))
+	b.WriteByte('\n')
+	b.WriteString(hintStyle.Render("    +foo -bar   must/must not"))
+	b.WriteByte('\n')
+	b.WriteByte('\n')
 	b.WriteString(line("f", "Cycle reason filter"))
 	b.WriteByte('\n')
 	b.WriteString(line("t", "Cycle type filter"))
@@ -1568,6 +1732,8 @@ func (a App) renderHelpOverlay() string {
 	b.WriteString(line("a", "Cycle age filter"))
 	b.WriteByte('\n')
 	b.WriteString(line("p", "Toggle participating"))
+	b.WriteByte('\n')
+	b.WriteString(line("A", "Toggle assigned to me"))
 	b.WriteByte('\n')
 	b.WriteString(line("Esc", "Clear filters"))
 	b.WriteByte('\n')
