@@ -80,7 +80,8 @@ type App struct {
 	reasonFilter   string
 	typeFilter     string
 	orgFilter      string
-	ageFilter      int // 0=all, 1=24h, 2=7d, 3=30d
+	stateFilter    string // open, closed, merged, draft
+	ageFilter      int    // 0=all, 1=24h, 2=7d, 3=30d
 	titleSearch    string
 	participating  bool
 	assignedFilter bool   // show only notifications assigned to current user
@@ -102,6 +103,7 @@ type App struct {
 	knownReasons []string
 	knownTypes   []string
 	knownOrgs    []string
+	knownStates  []string
 
 	// New notification tracking (set on each refresh)
 	newNotificationIDs map[string]bool
@@ -557,6 +559,7 @@ func (a App) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			a.reasonFilter = ""
 			a.typeFilter = ""
 			a.orgFilter = ""
+			a.stateFilter = ""
 			a.ageFilter = 0
 			a.titleSearch = ""
 			a.participating = false
@@ -821,6 +824,11 @@ func (a App) handleListKey(key string) (tea.Model, tea.Cmd) {
 		a.cursor = 0
 		a.offset = 0
 		return a, nil
+	case "x":
+		a.cycleStateFilter()
+		a.cursor = 0
+		a.offset = 0
+		return a, nil
 
 	case "enter":
 		if n := a.selectedNotification(); n != nil {
@@ -992,6 +1000,9 @@ func (a App) renderFilters() string {
 	}
 	if a.orgFilter != "" {
 		parts = append(parts, fmt.Sprintf("org:%s", a.orgFilter))
+	}
+	if a.stateFilter != "" {
+		parts = append(parts, fmt.Sprintf("state:%s", a.stateFilter))
 	}
 	if a.participating {
 		parts = append(parts, "participating")
@@ -1539,7 +1550,7 @@ func (a App) renderStatusBar() string {
 		left = countStyled
 	}
 
-	right := "q:quit  ?:help  r:read  m:mute  /:repo  s:search  t:type  p:part  a:age"
+	right := "q:quit  ?:help  r:read  m:mute  /:repo  s:search  t:type  x:state  a:age"
 	rightStyled := lipgloss.NewStyle().Foreground(theme.Dimmed).Render(right)
 
 	gap := a.width - lipgloss.Width(left) - lipgloss.Width(rightStyled)
@@ -1621,6 +1632,16 @@ func (a App) filteredNotifications() []github.Notification {
 				if !assigned && n.Reason != "assign" {
 					continue
 				}
+			}
+		}
+		// State filter: match effective state from thread detail
+		if a.stateFilter != "" {
+			detail := a.detailCache[n.ID]
+			if detail == nil {
+				continue // no detail cached yet, skip
+			}
+			if effectiveState(detail) != a.stateFilter {
+				continue
 			}
 		}
 		result = append(result, n)
@@ -1718,6 +1739,28 @@ func (a *App) cycleAgeFilter() {
 	a.ageFilter = (a.ageFilter + 1) % 4 // 0=all, 1=24h, 2=7d, 3=30d
 }
 
+func (a *App) cycleStateFilter() {
+	if len(a.knownStates) == 0 {
+		return
+	}
+	if a.stateFilter == "" {
+		a.stateFilter = a.knownStates[0]
+		return
+	}
+	for i, s := range a.knownStates {
+		if s == a.stateFilter {
+			next := (i + 1) % (len(a.knownStates) + 1)
+			if next == len(a.knownStates) {
+				a.stateFilter = ""
+			} else {
+				a.stateFilter = a.knownStates[next]
+			}
+			return
+		}
+	}
+	a.stateFilter = ""
+}
+
 // ageFilterDuration returns the time.Duration for the given age filter value.
 func ageFilterDuration(age int) time.Duration {
 	switch age {
@@ -1769,6 +1812,32 @@ func (a *App) collectFilterOptions() {
 	a.knownReasons = reasons
 	a.knownTypes = types
 	a.knownOrgs = orgs
+
+	// Collect known states from cached thread details
+	seenStates := make(map[string]bool)
+	var states []string
+	for _, n := range a.notifications {
+		if detail := a.detailCache[n.ID]; detail != nil {
+			s := effectiveState(detail)
+			if s != "" && !seenStates[s] {
+				seenStates[s] = true
+				states = append(states, s)
+			}
+		}
+	}
+	a.knownStates = states
+}
+
+// effectiveState returns the display state for a thread detail:
+// "merged", "draft", "open", or "closed".
+func effectiveState(d *github.ThreadDetail) string {
+	if d.Merged {
+		return "merged"
+	}
+	if d.Draft {
+		return "draft"
+	}
+	return d.State // "open" or "closed"
 }
 
 // maybeFetchDetail returns a Cmd to lazily fetch enriched detail for the
@@ -1840,7 +1909,7 @@ func (a *App) clampScroll() {
 
 func (a App) hasActiveFilters() bool {
 	return a.repoFilter != "" || a.reasonFilter != "" || a.typeFilter != "" ||
-		a.orgFilter != "" || a.ageFilter != 0 || a.titleSearch != "" ||
+		a.orgFilter != "" || a.stateFilter != "" || a.ageFilter != 0 || a.titleSearch != "" ||
 		a.participating || a.assignedFilter || len(a.searchResultIDs) > 0
 }
 
@@ -1983,6 +2052,8 @@ func (a App) renderHelpOverlay() string {
 	b.WriteString(line("o", "Cycle org filter"))
 	b.WriteByte('\n')
 	b.WriteString(line("a", "Cycle age filter"))
+	b.WriteByte('\n')
+	b.WriteString(line("x", "Cycle state filter (open/closed/merged/draft)"))
 	b.WriteByte('\n')
 	b.WriteString(line("p", "Toggle participating"))
 	b.WriteByte('\n')

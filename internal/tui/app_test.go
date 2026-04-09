@@ -1928,3 +1928,117 @@ func TestSpinnerShownInStatusBarWhileLoading(t *testing.T) {
 		t.Fatalf("expected spinner frame %q in status bar while loading, got %q", frame, bar)
 	}
 }
+
+func TestStateFilter(t *testing.T) {
+	a := newTestApp()
+
+	// Populate detail cache with different states
+	a.detailCache["1"] = &github.ThreadDetail{State: "open"}
+	a.detailCache["2"] = &github.ThreadDetail{State: "closed", Merged: true}
+	a.detailCache["3"] = &github.ThreadDetail{State: "closed"}
+	a.detailCache["4"] = &github.ThreadDetail{State: "open", Draft: true}
+	a.collectFilterOptions()
+
+	// No filter — all 4 visible
+	filtered := a.filteredNotifications()
+	if len(filtered) != 4 {
+		t.Errorf("no filter: got %d, want 4", len(filtered))
+	}
+
+	// Filter by "merged"
+	a.stateFilter = "merged"
+	filtered = a.filteredNotifications()
+	if len(filtered) != 1 || filtered[0].ID != "2" {
+		t.Errorf("state:merged: got %d items, want 1 (ID=2)", len(filtered))
+	}
+
+	// Filter by "open"
+	a.stateFilter = "open"
+	filtered = a.filteredNotifications()
+	if len(filtered) != 1 || filtered[0].ID != "1" {
+		t.Errorf("state:open: got %d items, want 1 (ID=1)", len(filtered))
+	}
+
+	// Filter by "draft"
+	a.stateFilter = "draft"
+	filtered = a.filteredNotifications()
+	if len(filtered) != 1 || filtered[0].ID != "4" {
+		t.Errorf("state:draft: got %d items, want 1 (ID=4)", len(filtered))
+	}
+
+	// Filter by "closed"
+	a.stateFilter = "closed"
+	filtered = a.filteredNotifications()
+	if len(filtered) != 1 || filtered[0].ID != "3" {
+		t.Errorf("state:closed: got %d items, want 1 (ID=3)", len(filtered))
+	}
+
+	// Clear filter
+	a.stateFilter = ""
+	filtered = a.filteredNotifications()
+	if len(filtered) != 4 {
+		t.Errorf("cleared: got %d, want 4", len(filtered))
+	}
+}
+
+func TestCycleStateFilter(t *testing.T) {
+	a := newTestApp()
+	a.detailCache["1"] = &github.ThreadDetail{State: "open"}
+	a.detailCache["2"] = &github.ThreadDetail{State: "closed", Merged: true}
+	a.collectFilterOptions()
+
+	if len(a.knownStates) != 2 {
+		t.Fatalf("expected 2 known states, got %d: %v", len(a.knownStates), a.knownStates)
+	}
+
+	// First cycle: picks first known state
+	a.cycleStateFilter()
+	if a.stateFilter != a.knownStates[0] {
+		t.Errorf("first cycle: got %q, want %q", a.stateFilter, a.knownStates[0])
+	}
+
+	// Second cycle: picks second known state
+	a.cycleStateFilter()
+	if a.stateFilter != a.knownStates[1] {
+		t.Errorf("second cycle: got %q, want %q", a.stateFilter, a.knownStates[1])
+	}
+
+	// Third cycle: wraps back to no filter
+	a.cycleStateFilter()
+	if a.stateFilter != "" {
+		t.Errorf("third cycle: got %q, want empty", a.stateFilter)
+	}
+}
+
+func TestEffectiveState(t *testing.T) {
+	tests := []struct {
+		name   string
+		detail *github.ThreadDetail
+		want   string
+	}{
+		{"open", &github.ThreadDetail{State: "open"}, "open"},
+		{"closed", &github.ThreadDetail{State: "closed"}, "closed"},
+		{"merged", &github.ThreadDetail{State: "closed", Merged: true}, "merged"},
+		{"draft", &github.ThreadDetail{State: "open", Draft: true}, "draft"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := effectiveState(tt.detail)
+			if got != tt.want {
+				t.Errorf("effectiveState() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestStateFilterIndicator(t *testing.T) {
+	a := newTestApp()
+	a.stateFilter = "merged"
+	if !a.hasActiveFilters() {
+		t.Fatal("expected hasActiveFilters to be true with stateFilter set")
+	}
+	rendered := a.renderFilters()
+	if !strings.Contains(rendered, "state:merged") {
+		t.Errorf("expected filter indicator to contain 'state:merged', got: %q", rendered)
+	}
+}

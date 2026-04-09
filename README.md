@@ -56,7 +56,7 @@ Environment variables `GH_BELL_TOKEN`, `GH_BELL_REFRESH`, and `GH_BELL_CLEANUP_D
 
 - **Vim-style navigation** — `j`/`k`, `gg`/`G` in both list and preview pane
 - **Three views** — Unread (`1`), All (`2`), Participating (`3`)
-- **Rich filtering** — repo (`/`), title search (`s`), reason (`f`), type (`t`), org (`o`), age (`a`), participating (`p`) — all combinable
+- **Rich filtering** — repo (`/`), title search (`s`), reason (`f`), type (`t`), org (`o`), age (`a`), state (`x`), participating (`p`) — all combinable
 - **Full-text search** — `S` searches notification titles, bodies, comments, labels, and more using [Bleve](https://blevesearch.com/)
 - **Actions** — `r` mark read, `R` mark all visible, `m` mute, `M` mute all visible, `u` unsubscribe
 - **Open in browser** — `Enter` opens the notification and marks it as read
@@ -122,6 +122,7 @@ Search covers titles, issue/PR bodies, comments, labels, repo names, and notific
 | `t` | Cycle type filter (Issue, PR, Release, etc.) |
 | `o` | Cycle org/owner filter |
 | `a` | Cycle age filter (24h, 7d, 30d) |
+| `x` | Cycle state filter (open, closed, merged, draft) |
 | `p` | Toggle participating-only |
 | `A` | Toggle assigned to me |
 | `Esc` | Clear all filters |
