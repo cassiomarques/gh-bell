@@ -153,3 +153,25 @@ func clearStatusCmd() tea.Cmd {
 		return clearStatusMsg{}
 	})
 }
+
+// fetchThreadDetailCmd lazily fetches enriched details for a notification thread.
+// This calls the subject URL and latest comment URL from the notification.
+func fetchThreadDetailCmd(client *github.Client, threadID, subjectURL, commentURL string) tea.Cmd {
+	return func() tea.Msg {
+		log.Printf("fetch detail: thread=%s subject=%s comment=%s", threadID, subjectURL, commentURL)
+		detail, err := client.FetchThreadDetail(subjectURL, commentURL)
+		if err != nil {
+			log.Printf("fetch detail: error for thread %s: %v", threadID, err)
+			return threadDetailErrorMsg{threadID: threadID}
+		}
+		return threadDetailLoadedMsg{threadID: threadID, detail: detail}
+	}
+}
+
+// spinnerTickCmd returns a Cmd that sends a spinnerTickMsg after a short delay
+// to animate the loading spinner in the preview pane.
+func spinnerTickCmd() tea.Cmd {
+	return tea.Tick(80*time.Millisecond, func(time.Time) tea.Msg {
+		return spinnerTickMsg{}
+	})
+}

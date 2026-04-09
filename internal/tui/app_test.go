@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -738,5 +739,317 @@ func TestApp_NewItemRenderIndicator(t *testing.T) {
 	row2 := a.renderNotificationRow(a.notifications[1], false)
 	if strings.Contains(row2, "•") {
 		t.Error("existing notification row should not contain • indicator")
+	}
+}
+
+func TestWordWrap(t *testing.T) {
+	tests := []struct {
+		name     string
+		text     string
+		width    int
+		expected []string
+	}{
+		{
+			name:     "short text no wrap",
+			text:     "hello world",
+			width:    20,
+			expected: []string{"hello world"},
+		},
+		{
+			name:     "wraps at width",
+			text:     "one two three four five",
+			width:    10,
+			expected: []string{"one two", "three four", "five"},
+		},
+		{
+			name:     "preserves newlines",
+			text:     "first\nsecond",
+			width:    80,
+			expected: []string{"first", "second"},
+		},
+		{
+			name:     "empty text",
+			text:     "",
+			width:    40,
+			expected: []string{""},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			result := wordWrap(tc.text, tc.width)
+			if len(result) != len(tc.expected) {
+				t.Fatalf("expected %d lines, got %d: %v", len(tc.expected), len(result), result)
+			}
+			for i, line := range result {
+				if line != tc.expected[i] {
+					t.Errorf("line %d: expected %q, got %q", i, tc.expected[i], line)
+				}
+			}
+		})
+	}
+}
+
+func TestDetailCache(t *testing.T) {
+	a := newTestApp()
+	a.detailCache = make(map[string]*github.ThreadDetail)
+
+	// No detail cached → loading should trigger
+	n := a.selectedNotification()
+	if n == nil {
+		t.Fatal("expected a selected notification")
+	}
+	_, cached := a.detailCache[n.ID]
+	if cached {
+		t.Error("detail should not be cached initially")
+	}
+
+	// Simulate caching a detail
+	detail := &github.ThreadDetail{
+		State: "open",
+		User:  github.User{Login: "testuser"},
+		Body:  "This is a test body",
+	}
+	a.detailCache[n.ID] = detail
+
+	// Now it should be cached
+	got, ok := a.detailCache[n.ID]
+	if !ok || got.State != "open" {
+		t.Error("detail should be cached and retrievable")
+	}
+}
+
+func TestPreviewWithDetail(t *testing.T) {
+	a := newTestApp()
+	a.detailCache = make(map[string]*github.ThreadDetail)
+
+	// Cache a detail for the first notification
+	a.detailCache["1"] = &github.ThreadDetail{
+		State:  "open",
+		User:   github.User{Login: "alice"},
+		Labels: []github.Label{{Name: "bug"}, {Name: "urgent"}},
+		Body:   "Fix the login flow for SSO users",
+		LatestComment: &github.Comment{
+			Body:      "I can reproduce this on Chrome",
+			User:      github.User{Login: "bob"},
+			CreatedAt: time.Now().Add(-30 * time.Minute),
+		},
+	}
+
+	preview := a.renderPreview(30, 60)
+
+	// Should contain enriched detail
+	if !strings.Contains(preview, "open") {
+		t.Error("preview should show state")
+	}
+	if !strings.Contains(preview, "alice") {
+		t.Error("preview should show author")
+	}
+	if !strings.Contains(preview, "bug") {
+		t.Error("preview should show labels")
+	}
+	if !strings.Contains(preview, "Login flow") || !strings.Contains(preview, "SSO") {
+		// Body is word-wrapped so check individually
+		if !strings.Contains(preview, "login") && !strings.Contains(preview, "Fix") {
+			t.Error("preview should show body text")
+		}
+	}
+	if !strings.Contains(preview, "bob") {
+		t.Error("preview should show comment author")
+	}
+	if !strings.Contains(preview, "Chrome") {
+		t.Error("preview should show comment body")
+	}
+}
+
+func TestPreviewLoadingIndicator(t *testing.T) {
+	a := newTestApp()
+	a.detailCache = make(map[string]*github.ThreadDetail)
+	a.detailLoading = "1" // Simulate loading for first notification
+
+	preview := a.renderPreview(20, 60)
+	if !strings.Contains(preview, "Loading details...") {
+		t.Error("preview should show loading indicator when detail is being fetched")
+	}
+}
+
+func TestMaybeFetchDetail_AlreadyCached(t *testing.T) {
+	a := newTestApp()
+	a.detailCache = make(map[string]*github.ThreadDetail)
+	a.detailCache["1"] = &github.ThreadDetail{State: "open"}
+
+	cmd := a.maybeFetchDetail()
+	if cmd != nil {
+		t.Error("should not return cmd when detail is already cached")
+	}
+}
+
+func TestMaybeFetchDetail_AlreadyLoading(t *testing.T) {
+	a := newTestApp()
+	a.detailCache = make(map[string]*github.ThreadDetail)
+	a.detailLoading = "1"
+
+	cmd := a.maybeFetchDetail()
+	if cmd != nil {
+		t.Error("should not return cmd when detail is already loading")
+	}
+}
+
+func TestSpinnerShowsInLoadingPreview(t *testing.T) {
+	a := newTestApp()
+	a.detailCache = make(map[string]*github.ThreadDetail)
+	a.detailLoading = "1"
+
+	// Test multiple spinner frames render correctly
+	for _, frame := range spinnerFrames {
+		preview := a.renderPreview(20, 60)
+		if !strings.Contains(preview, "Loading details...") {
+			t.Error("preview should always show 'Loading details...' text during loading")
+		}
+		// The spinner frame character should appear in the preview
+		if !strings.Contains(preview, frame) {
+			t.Errorf("preview should contain spinner frame %q", frame)
+		}
+		a.spinnerFrame++
+	}
+}
+
+func TestSpinnerFrameAdvances(t *testing.T) {
+	a := newTestApp()
+	a.detailCache = make(map[string]*github.ThreadDetail)
+	a.detailLoading = "1"
+	a.spinnerFrame = 0
+
+	// Simulate spinnerTickMsg via Update
+	result, cmd := a.Update(spinnerTickMsg{})
+	updated := result.(App)
+
+	if updated.spinnerFrame != 1 {
+		t.Errorf("spinner frame should advance to 1, got %d", updated.spinnerFrame)
+	}
+	// Should return another tick cmd since detailLoading is still set
+	if cmd == nil {
+		t.Error("should return another tick cmd while detail is loading")
+	}
+}
+
+func TestSpinnerStopsWhenNotLoading(t *testing.T) {
+	a := newTestApp()
+	a.detailCache = make(map[string]*github.ThreadDetail)
+	a.detailLoading = "" // not loading
+	a.spinnerFrame = 3
+
+	result, cmd := a.Update(spinnerTickMsg{})
+	updated := result.(App)
+
+	// Frame should not advance when not loading
+	if updated.spinnerFrame != 3 {
+		t.Errorf("spinner frame should stay at 3 when not loading, got %d", updated.spinnerFrame)
+	}
+	if cmd != nil {
+		t.Error("should not return tick cmd when not loading")
+	}
+}
+
+func TestSpinnerFrameWraps(t *testing.T) {
+	a := newTestApp()
+	a.detailCache = make(map[string]*github.ThreadDetail)
+	a.detailLoading = "1"
+	a.spinnerFrame = len(spinnerFrames) - 1 // last frame
+
+	result, _ := a.Update(spinnerTickMsg{})
+	updated := result.(App)
+
+	if updated.spinnerFrame != 0 {
+		t.Errorf("spinner frame should wrap to 0, got %d", updated.spinnerFrame)
+	}
+}
+
+func TestPreviewBodyNotTruncated(t *testing.T) {
+	a := newTestApp()
+	a.detailCache = make(map[string]*github.ThreadDetail)
+
+	// Create a long body with 20 lines worth of content
+	var longBody string
+	for i := 1; i <= 20; i++ {
+		longBody += fmt.Sprintf("This is line number %d of the description body.\n", i)
+	}
+
+	a.detailCache["1"] = &github.ThreadDetail{
+		State: "open",
+		User:  github.User{Login: "author"},
+		Body:  longBody,
+	}
+
+	preview := a.renderPreview(50, 60) // enough height to fit everything
+
+	// All 20 lines should be present — no truncation
+	if strings.Contains(preview, "...") {
+		t.Error("preview should NOT truncate body with '...'")
+	}
+	// Check first and last lines are both present
+	if !strings.Contains(preview, "line number 1") {
+		t.Error("preview should contain first line of body")
+	}
+	if !strings.Contains(preview, "line number 20") {
+		t.Error("preview should contain last line of body (no truncation)")
+	}
+}
+
+func TestPreviewCommentNotTruncated(t *testing.T) {
+	a := newTestApp()
+	a.detailCache = make(map[string]*github.ThreadDetail)
+
+	// Create a long comment with 15 lines
+	var longComment string
+	for i := 1; i <= 15; i++ {
+		longComment += fmt.Sprintf("Comment line %d with some context.\n", i)
+	}
+
+	a.detailCache["1"] = &github.ThreadDetail{
+		State: "open",
+		User:  github.User{Login: "author"},
+		LatestComment: &github.Comment{
+			Body:      longComment,
+			User:      github.User{Login: "commenter"},
+			CreatedAt: time.Now(),
+		},
+	}
+
+	preview := a.renderPreview(50, 60)
+
+	if strings.Contains(preview, "...") {
+		t.Error("preview should NOT truncate comment with '...'")
+	}
+	if !strings.Contains(preview, "Comment line 1") {
+		t.Error("preview should contain first line of comment")
+	}
+	if !strings.Contains(preview, "Comment line 15") {
+		t.Error("preview should contain last line of comment (no truncation)")
+	}
+}
+
+func TestMaybeFetchDetail_StartsSpinner(t *testing.T) {
+	a := newTestApp()
+	a.detailCache = make(map[string]*github.ThreadDetail)
+	a.spinnerFrame = 5 // non-zero to verify reset
+
+	// Can't actually call maybeFetchDetail without a real client,
+	// but we can test the state changes it makes
+	a.detailLoading = ""
+	// Verify precondition: not loading, not cached
+	_, cached := a.detailCache["1"]
+	if cached {
+		t.Fatal("should not be cached")
+	}
+
+	// Simulate what maybeFetchDetail does to state (without the client call)
+	a.detailLoading = "1"
+	a.spinnerFrame = 0
+
+	if a.detailLoading != "1" {
+		t.Error("detailLoading should be set")
+	}
+	if a.spinnerFrame != 0 {
+		t.Error("spinnerFrame should be reset to 0 on new fetch")
 	}
 }

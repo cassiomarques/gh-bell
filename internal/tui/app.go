@@ -42,6 +42,9 @@ var participatingReasons = map[string]bool{
 	"approval_requested": true,
 }
 
+// spinnerFrames are the animation frames for the loading spinner.
+var spinnerFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
+
 // App is the root Bubble Tea model.
 //
 // In the Elm Architecture, this struct IS the entire application state.
@@ -79,7 +82,10 @@ type App struct {
 	filterBuf     string
 
 	// Preview
-	previewScroll int
+	previewScroll  int
+	detailCache    map[string]*github.ThreadDetail // cached enriched details by thread ID
+	detailLoading  string                          // thread ID currently being fetched
+	spinnerFrame   int                             // animation frame for loading spinner
 
 	// Double-key tracking (for gg)
 	lastKey     string
@@ -103,6 +109,7 @@ func NewApp(client *github.Client) App {
 		client:      client,
 		currentView: github.ViewUnread,
 		loading:     true,
+		detailCache: make(map[string]*github.ThreadDetail),
 	}
 }
 
@@ -201,12 +208,15 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		a.clampCursor()
 
+		// Fetch enriched detail for the currently selected notification
+		detailCmd := a.maybeFetchDetail()
+
 		if len(newIDs) > 0 {
 			a.statusText = fmt.Sprintf("%d new", len(newIDs))
 			a.statusError = false
-			return a, clearStatusCmd()
+			return a, tea.Batch(clearStatusCmd(), detailCmd)
 		}
-		return a, nil
+		return a, detailCmd
 
 	case errorMsg:
 		log.Printf("update: errorMsg: %v", msg.err)
@@ -257,6 +267,27 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.statusText = msg.text
 		a.statusError = msg.isError
 		return a, clearStatusCmd()
+
+	case threadDetailLoadedMsg:
+		a.detailCache[msg.threadID] = msg.detail
+		if a.detailLoading == msg.threadID {
+			a.detailLoading = ""
+		}
+		return a, nil
+
+	case threadDetailErrorMsg:
+		if a.detailLoading == msg.threadID {
+			a.detailLoading = ""
+		}
+		return a, nil
+
+	case spinnerTickMsg:
+		// Only keep ticking while we're actively loading a detail
+		if a.detailLoading != "" {
+			a.spinnerFrame = (a.spinnerFrame + 1) % len(spinnerFrames)
+			return a, spinnerTickCmd()
+		}
+		return a, nil
 	}
 
 	return a, nil
@@ -407,11 +438,13 @@ func (a App) handleListKey(key string) (tea.Model, tea.Cmd) {
 	case "j", "down":
 		a.cursor++
 		a.clampCursor()
-		return a, nil
+		a.previewScroll = 0
+		return a, a.maybeFetchDetail()
 	case "k", "up":
 		a.cursor--
 		a.clampCursor()
-		return a, nil
+		a.previewScroll = 0
+		return a, a.maybeFetchDetail()
 	case "g":
 		// Double-tap 'g' for jump to top
 		now := time.Now()
@@ -419,7 +452,8 @@ func (a App) handleListKey(key string) (tea.Model, tea.Cmd) {
 			a.cursor = 0
 			a.clampScroll()
 			a.lastKey = ""
-			return a, nil
+			a.previewScroll = 0
+			return a, a.maybeFetchDetail()
 		}
 		a.lastKey = "g"
 		a.lastKeyTime = now
@@ -429,7 +463,8 @@ func (a App) handleListKey(key string) (tea.Model, tea.Cmd) {
 			a.cursor = len(filtered) - 1
 		}
 		a.clampScroll()
-		return a, nil
+		a.previewScroll = 0
+		return a, a.maybeFetchDetail()
 
 	// Actions
 	case "r":
@@ -681,6 +716,17 @@ func (a App) renderPreview(height, width int) string {
 		lines = append(lines, dim.Render("  Scope:   ")+lipgloss.NewStyle().Foreground(theme.ColorYellow).Render("Private"))
 	}
 
+	// Enriched detail from lazy fetch
+	detail, cached := a.detailCache[n.ID]
+	if cached && detail != nil {
+		lines = append(lines, "")
+		lines = a.renderEnrichedDetail(lines, detail, n.Subject.Type, width)
+	} else if a.detailLoading == n.ID {
+		lines = append(lines, "")
+		frame := spinnerFrames[a.spinnerFrame%len(spinnerFrames)]
+		lines = append(lines, lipgloss.NewStyle().Foreground(theme.ColorLavender).Render("  "+frame+" Loading details..."))
+	}
+
 	lines = append(lines, "")
 
 	// Web URL
@@ -714,6 +760,112 @@ func (a App) renderPreview(height, width int) string {
 	}
 
 	return strings.Join(lines, "\n")
+}
+
+// renderEnrichedDetail appends enriched information from the lazy-fetched ThreadDetail.
+func (a App) renderEnrichedDetail(lines []string, detail *github.ThreadDetail, subjectType string, width int) []string {
+	dim := lipgloss.NewStyle().Foreground(theme.Dimmed)
+	val := lipgloss.NewStyle().Foreground(theme.ColorSubtext1)
+	bodyWidth := width - 4 // 2 indent + 2 margin
+
+	// State with color coding
+	if detail.State != "" {
+		stateColor := theme.ColorGreen
+		stateLabel := detail.State
+		if detail.Merged {
+			stateLabel = "merged"
+			stateColor = theme.ColorMauve
+		} else if detail.State == "closed" {
+			stateColor = theme.ColorRed
+		}
+		if detail.Draft {
+			stateLabel += " (draft)"
+		}
+		lines = append(lines, dim.Render("  State:   ")+lipgloss.NewStyle().Foreground(stateColor).Render(stateLabel))
+	}
+
+	// Author
+	if detail.User.Login != "" {
+		lines = append(lines, dim.Render("  Author:  ")+val.Render("@"+detail.User.Login))
+	}
+
+	// Labels
+	if len(detail.Labels) > 0 {
+		var labelNames []string
+		for _, l := range detail.Labels {
+			labelNames = append(labelNames, l.Name)
+		}
+		labelStr := strings.Join(labelNames, ", ")
+		lines = append(lines, dim.Render("  Labels:  ")+lipgloss.NewStyle().Foreground(theme.ColorYellow).Render(labelStr))
+	}
+
+	// PR-specific stats
+	if subjectType == "PullRequest" && (detail.Additions > 0 || detail.Deletions > 0) {
+		stats := fmt.Sprintf("+%d / -%d", detail.Additions, detail.Deletions)
+		lines = append(lines, dim.Render("  Changes: ")+val.Render(stats))
+	}
+
+	// Release tag
+	if subjectType == "Release" && detail.TagName != "" {
+		lines = append(lines, dim.Render("  Tag:     ")+val.Render(detail.TagName))
+	}
+
+	// Body (word-wrapped, full content — preview is scrollable)
+	if detail.Body != "" {
+		lines = append(lines, "")
+		lines = append(lines, dim.Render("  ─── Description ───"))
+		bodyLines := wordWrap(detail.Body, bodyWidth)
+		for _, bl := range bodyLines {
+			lines = append(lines, "  "+val.Render(bl))
+		}
+	}
+
+	// Latest comment
+	if detail.LatestComment != nil && detail.LatestComment.Body != "" {
+		c := detail.LatestComment
+		lines = append(lines, "")
+		commentHeader := fmt.Sprintf("  ─── Comment by @%s (%s) ───",
+			c.User.Login, c.CreatedAt.Local().Format("Jan 02, 15:04"))
+		lines = append(lines, dim.Render(commentHeader))
+		commentLines := wordWrap(c.Body, bodyWidth)
+		for _, cl := range commentLines {
+			lines = append(lines, "  "+val.Render(cl))
+		}
+	}
+
+	return lines
+}
+
+// wordWrap breaks text into lines of at most maxWidth characters, splitting on
+// whitespace. It also splits on existing newlines in the text.
+func wordWrap(text string, maxWidth int) []string {
+	if maxWidth <= 0 {
+		maxWidth = 80
+	}
+	var result []string
+	for _, paragraph := range strings.Split(text, "\n") {
+		paragraph = strings.TrimSpace(paragraph)
+		if paragraph == "" {
+			result = append(result, "")
+			continue
+		}
+		words := strings.Fields(paragraph)
+		line := ""
+		for _, w := range words {
+			if line == "" {
+				line = w
+			} else if len(line)+1+len(w) <= maxWidth {
+				line += " " + w
+			} else {
+				result = append(result, line)
+				line = w
+			}
+		}
+		if line != "" {
+			result = append(result, line)
+		}
+	}
+	return result
 }
 
 func (a App) renderNotificationListSized(notifications []github.Notification, height, width int) string {
@@ -1115,6 +1267,29 @@ func (a *App) collectFilterOptions() {
 	a.knownReasons = reasons
 	a.knownTypes = types
 	a.knownOrgs = orgs
+}
+
+// maybeFetchDetail returns a Cmd to lazily fetch enriched detail for the
+// currently selected notification, or nil if already cached/loading.
+func (a *App) maybeFetchDetail() tea.Cmd {
+	n := a.selectedNotification()
+	if n == nil || a.client == nil {
+		return nil
+	}
+	if _, ok := a.detailCache[n.ID]; ok {
+		return nil // already cached
+	}
+	if a.detailLoading == n.ID {
+		return nil // already fetching
+	}
+	a.detailLoading = n.ID
+	a.spinnerFrame = 0
+	// Batch both the fetch command and the spinner tick so the spinner
+	// starts animating immediately while we wait for the API response.
+	return tea.Batch(
+		fetchThreadDetailCmd(a.client, n.ID, n.Subject.URL, n.Subject.LatestCommentURL),
+		spinnerTickCmd(),
+	)
 }
 
 // orgFromFullName extracts the owner/org from "owner/repo".

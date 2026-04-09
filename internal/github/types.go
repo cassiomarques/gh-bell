@@ -42,6 +42,44 @@ type ThreadSubscription struct {
 	CreatedAt  time.Time `json:"created_at"`
 }
 
+// ThreadDetail holds enriched data fetched lazily for the preview pane.
+type ThreadDetail struct {
+	// From subject URL (issue/PR/release)
+	State    string   `json:"state"`
+	Body     string   `json:"body"`
+	Labels   []Label  `json:"labels"`
+	User     User     `json:"user"`
+	Draft    bool     `json:"draft"`
+	Merged   bool     `json:"merged"`
+	MergedBy *User    `json:"merged_by"`
+	// PR-specific
+	Additions int `json:"additions"`
+	Deletions int `json:"deletions"`
+	// Release-specific
+	TagName string `json:"tag_name"`
+
+	// From latest_comment_url (fetched separately)
+	LatestComment *Comment
+}
+
+// Label represents a GitHub label.
+type Label struct {
+	Name  string `json:"name"`
+	Color string `json:"color"`
+}
+
+// User represents a GitHub user.
+type User struct {
+	Login string `json:"login"`
+}
+
+// Comment represents a GitHub issue/PR comment.
+type Comment struct {
+	Body      string    `json:"body"`
+	User      User      `json:"user"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
 // WebURL converts a GitHub API URL to a browser-friendly web URL.
 // e.g. "https://api.github.com/repos/owner/repo/issues/42"
 //    → "https://github.com/owner/repo/issues/42"

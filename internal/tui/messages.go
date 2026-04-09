@@ -49,3 +49,17 @@ type threadUnsubscribedMsg struct {
 
 // refreshTickMsg triggers a periodic re-fetch of notifications.
 type refreshTickMsg struct{}
+
+// threadDetailLoadedMsg carries enriched detail fetched lazily for a thread.
+type threadDetailLoadedMsg struct {
+	threadID string
+	detail   *github.ThreadDetail
+}
+
+// threadDetailErrorMsg is sent when detail fetching fails (non-fatal).
+type threadDetailErrorMsg struct {
+	threadID string
+}
+
+// spinnerTickMsg advances the loading spinner animation frame.
+type spinnerTickMsg struct{}

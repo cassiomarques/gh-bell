@@ -167,3 +167,43 @@ func (c *Client) UnsubscribeThread(threadID string) error {
 	}
 	return nil
 }
+
+// FetchThreadDetail fetches enriched details for a notification by calling
+// the subject URL (issue/PR/release) and optionally the latest comment URL.
+// The subject URL is an API URL like "https://api.github.com/repos/owner/repo/issues/42"
+// which we strip to a relative path for the REST client.
+func (c *Client) FetchThreadDetail(subjectURL, commentURL string) (*ThreadDetail, error) {
+	detail := &ThreadDetail{}
+
+	if subjectURL != "" {
+		endpoint := stripAPIHost(subjectURL)
+		if endpoint != "" {
+			if err := c.rest.Get(endpoint, detail); err != nil {
+				return nil, fmt.Errorf("fetching subject detail: %w", err)
+			}
+		}
+	}
+
+	if commentURL != "" {
+		endpoint := stripAPIHost(commentURL)
+		if endpoint != "" {
+			var comment Comment
+			if err := c.rest.Get(endpoint, &comment); err == nil {
+				detail.LatestComment = &comment
+			}
+			// Non-fatal: we still have subject detail even if comment fetch fails
+		}
+	}
+
+	return detail, nil
+}
+
+// stripAPIHost removes the "https://api.github.com/" prefix to get a
+// relative endpoint path for the REST client.
+func stripAPIHost(url string) string {
+	const prefix = "https://api.github.com/"
+	if strings.HasPrefix(url, prefix) {
+		return url[len(prefix):]
+	}
+	return ""
+}
