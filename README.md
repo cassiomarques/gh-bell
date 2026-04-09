@@ -67,7 +67,7 @@ Environment variables `GH_BELL_TOKEN`, `GH_BELL_REFRESH`, and `GH_BELL_CLEANUP_D
 - **Color-coded reasons** — each notification reason (review, mention, assign, etc.) has a distinct color
 - **Auto-refresh** — configurable polling interval (default 60s)
 - **Incremental sync** — on first launch, fetches your full notification history; subsequent refreshes use `since` to only fetch new updates (much faster)
-- **Force resync** — `F` clears the local cache flag and re-fetches everything from scratch
+- **Force resync** — `Ctrl+F` clears the local cache flag and re-fetches everything from scratch
 - **Auto-cleanup** — removes old read notifications from local cache (default: 15 days, configurable)
 - **Log pane** — `Ctrl+L` toggles a live log viewer for debugging
 - **Notification count** — status bar shows filtered/total count
@@ -131,7 +131,7 @@ Search covers titles, issue/PR bodies, comments, labels, repo names, and notific
 | Key | Action |
 |-----|--------|
 | `Ctrl+R` | Refresh notifications |
-| `F` | Force full resync (re-fetches all pages) |
+| `Ctrl+F` | Force full resync (re-fetches all pages) |
 | `Ctrl+L` | Toggle log pane |
 | `?` | Toggle help overlay |
 | `q` | Quit |

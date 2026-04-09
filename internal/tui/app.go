@@ -489,7 +489,7 @@ func (a App) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		a.statusText = ""
 		a.statusError = false
 		return a, fetchNotificationsCmd(a.client, a.service, a.currentView)
-	case "ctrl+shift+r", "F":
+	case "ctrl+f":
 		a.loading = true
 		a.statusText = "Force resyncing all notifications…"
 		a.statusError = false
@@ -1988,7 +1988,7 @@ func (a App) renderHelpOverlay() string {
 	b.WriteByte('\n')
 	b.WriteString(line("Ctrl+R", "Refresh notifications"))
 	b.WriteByte('\n')
-	b.WriteString(line("F", "Force full resync"))
+	b.WriteString(line("Ctrl+F", "Force full resync"))
 	b.WriteByte('\n')
 	b.WriteString(line("Ctrl+L", "Toggle log pane"))
 	b.WriteByte('\n')
