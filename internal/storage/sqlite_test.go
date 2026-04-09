@@ -631,3 +631,83 @@ func TestDetailWithEmptyLabels(t *testing.T) {
 		// nil is OK, but empty slice is also OK
 	}
 }
+
+// --- Purge Tests ---
+
+func TestPurgeOldNotifications(t *testing.T) {
+	s := testStore(t)
+
+	// Insert an old read notification and a recent unread one
+	oldNotif := sampleNotification("old")
+	oldNotif.Unread = false
+	oldNotif.UpdatedAt = time.Now().AddDate(0, 0, -30) // 30 days ago
+	if err := s.UpsertNotification(oldNotif); err != nil {
+		t.Fatal(err)
+	}
+
+	newNotif := sampleNotification("new")
+	newNotif.UpdatedAt = time.Now().Add(-1 * time.Hour)
+	if err := s.UpsertNotification(newNotif); err != nil {
+		t.Fatal(err)
+	}
+
+	// Also add an old but UNREAD notification — should NOT be purged
+	oldUnread := sampleNotification("old-unread")
+	oldUnread.Unread = true
+	oldUnread.UpdatedAt = time.Now().AddDate(0, 0, -30)
+	if err := s.UpsertNotification(oldUnread); err != nil {
+		t.Fatal(err)
+	}
+
+	cutoff := time.Now().AddDate(0, 0, -15) // 15 days ago
+	purged, err := s.PurgeOldNotifications(cutoff)
+	if err != nil {
+		t.Fatalf("PurgeOldNotifications: %v", err)
+	}
+	if purged != 1 {
+		t.Fatalf("expected 1 purged, got %d", purged)
+	}
+
+	all, err := s.ListNotifications(false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(all) != 2 {
+		t.Fatalf("expected 2 remaining notifications, got %d", len(all))
+	}
+}
+
+func TestPurgeOldDetails(t *testing.T) {
+	s := testStore(t)
+
+	// Insert a notification + its detail
+	n := sampleNotification("1")
+	if err := s.UpsertNotification(n); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpsertDetail("1", sampleDetail()); err != nil {
+		t.Fatal(err)
+	}
+
+	// Insert an orphaned detail (no corresponding notification)
+	if err := s.UpsertDetail("orphan", sampleDetail()); err != nil {
+		t.Fatal(err)
+	}
+
+	purged, err := s.PurgeOldDetails()
+	if err != nil {
+		t.Fatalf("PurgeOldDetails: %v", err)
+	}
+	if purged != 1 {
+		t.Fatalf("expected 1 orphan purged, got %d", purged)
+	}
+
+	// The non-orphaned detail should still exist
+	d, _, err := s.GetDetail("1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d == nil {
+		t.Fatal("expected detail for thread 1 to still exist")
+	}
+}

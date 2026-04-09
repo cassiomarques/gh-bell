@@ -1,6 +1,7 @@
 package service
 
 import (
+	"fmt"
 	"log"
 	"strings"
 	"time"
@@ -265,6 +266,21 @@ func (s *NotificationService) SearchFuzzy(query string, limit int) ([]search.Sea
 }
 
 // --- Internal helpers ---
+
+// Cleanup purges read notifications older than the given number of days,
+// along with their orphaned thread details. Returns total records purged.
+func (s *NotificationService) Cleanup(days int) (int, error) {
+	cutoff := time.Now().AddDate(0, 0, -days)
+	purgedNotifs, err := s.store.PurgeOldNotifications(cutoff)
+	if err != nil {
+		return 0, fmt.Errorf("purge notifications: %w", err)
+	}
+	purgedDetails, err := s.store.PurgeOldDetails()
+	if err != nil {
+		return purgedNotifs, fmt.Errorf("purge details: %w", err)
+	}
+	return purgedNotifs + purgedDetails, nil
+}
 
 // indexNotifications indexes notification titles in Bleve for full-text search.
 // Body and comment text are added later when details are lazily fetched.

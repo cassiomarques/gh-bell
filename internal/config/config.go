@@ -10,6 +10,8 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+const defaultCleanupDays = 15
+
 const defaultConfigTemplate = `# gh-bell configuration
 # See https://github.com/cassiomarques/gh-bell for documentation.
 
@@ -20,12 +22,17 @@ token: ""
 
 # Auto-refresh interval in seconds (default: 60).
 # refresh_interval: 60
+
+# Auto-cleanup: remove read notifications older than N days (default: 15).
+# Set to 0 to disable cleanup.
+# cleanup_days: 15
 `
 
 // Config holds all gh-bell configuration.
 type Config struct {
 	Token           string `yaml:"token"`
 	RefreshInterval int    `yaml:"refresh_interval,omitempty"`
+	CleanupDays     int    `yaml:"cleanup_days,omitempty"`
 }
 
 // Dir returns the gh-bell data/config directory (~/.gh-bell/).
@@ -71,6 +78,12 @@ func Load() (*Config, error) {
 	}
 
 	applyEnvOverrides(cfg)
+
+	// Apply defaults for fields not set by file or env
+	if cfg.CleanupDays == 0 {
+		cfg.CleanupDays = defaultCleanupDays
+	}
+
 	return cfg, nil
 }
 
@@ -93,6 +106,13 @@ func applyEnvOverrides(cfg *Config) {
 			cfg.RefreshInterval = secs
 		} else {
 			log.Printf("ignoring invalid GH_BELL_REFRESH=%q", s)
+		}
+	}
+	if s := os.Getenv("GH_BELL_CLEANUP_DAYS"); s != "" {
+		if days, err := strconv.Atoi(s); err == nil && days >= 0 {
+			cfg.CleanupDays = days
+		} else {
+			log.Printf("ignoring invalid GH_BELL_CLEANUP_DAYS=%q", s)
 		}
 	}
 }

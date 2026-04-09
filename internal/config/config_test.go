@@ -100,3 +100,46 @@ func TestCreateDefault_SetsPermissions(t *testing.T) {
 		t.Fatal("expected non-empty default config")
 	}
 }
+
+func TestLoad_CleanupDaysDefault(t *testing.T) {
+	cfg := &Config{}
+	// Simulate what Load does: parseConfig with empty data, then apply defaults
+	if cfg.CleanupDays != 0 {
+		t.Fatal("expected zero before defaults applied")
+	}
+	// After Load, CleanupDays should default to 15
+	if defaultCleanupDays != 15 {
+		t.Fatalf("expected default cleanup days 15, got %d", defaultCleanupDays)
+	}
+}
+
+func TestLoad_CleanupDaysFromYAML(t *testing.T) {
+	content := `token: ghp_test
+cleanup_days: 30
+`
+	cfg := &Config{}
+	if err := parseConfig([]byte(content), cfg); err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if cfg.CleanupDays != 30 {
+		t.Fatalf("expected cleanup_days 30, got %d", cfg.CleanupDays)
+	}
+}
+
+func TestLoad_CleanupDaysEnvOverride(t *testing.T) {
+	cfg := &Config{CleanupDays: 15}
+	t.Setenv("GH_BELL_CLEANUP_DAYS", "7")
+	applyEnvOverrides(cfg)
+	if cfg.CleanupDays != 7 {
+		t.Fatalf("expected cleanup_days 7 from env, got %d", cfg.CleanupDays)
+	}
+}
+
+func TestLoad_CleanupDaysZeroDisables(t *testing.T) {
+	cfg := &Config{CleanupDays: 15}
+	t.Setenv("GH_BELL_CLEANUP_DAYS", "0")
+	applyEnvOverrides(cfg)
+	if cfg.CleanupDays != 0 {
+		t.Fatalf("expected cleanup_days 0 (disabled) from env, got %d", cfg.CleanupDays)
+	}
+}

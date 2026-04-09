@@ -263,6 +263,34 @@ func (s *Store) MarkAllRead() error {
 	return err
 }
 
+// PurgeOldNotifications deletes read notifications older than the given cutoff.
+// Returns the number of rows deleted.
+func (s *Store) PurgeOldNotifications(olderThan time.Time) (int, error) {
+	res, err := s.db.Exec(
+		"DELETE FROM notifications WHERE unread = 0 AND updated_at < ?",
+		olderThan.UTC(),
+	)
+	if err != nil {
+		return 0, err
+	}
+	n, _ := res.RowsAffected()
+	return int(n), nil
+}
+
+// PurgeOldDetails deletes thread details that have no corresponding notification.
+// Returns the number of rows deleted.
+func (s *Store) PurgeOldDetails() (int, error) {
+	res, err := s.db.Exec(`
+		DELETE FROM thread_details
+		WHERE thread_id NOT IN (SELECT id FROM notifications)
+	`)
+	if err != nil {
+		return 0, err
+	}
+	n, _ := res.RowsAffected()
+	return int(n), nil
+}
+
 // --- Thread Details ---
 
 // UpsertDetail stores or updates cached thread detail data.
