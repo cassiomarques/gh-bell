@@ -19,7 +19,7 @@ builds:
 
 archives:
   - format: binary
-    name_template: "{{ .ProjectName }}_{{ .Tag }}_{{ .Os }}-{{ .Arch }}{{ if eq .Os \"windows\" }}.exe{{ end }}"
+    name_template: "{{ .ProjectName }}_{{ .Tag }}_{{ .Os }}-{{ .Arch }}"
 
 checksum:
   name_template: "checksums.txt"
