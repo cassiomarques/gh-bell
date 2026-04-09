@@ -1517,6 +1517,10 @@ func (a App) renderStatusBar() string {
 	} else {
 		countStr = fmt.Sprintf(" %d", total)
 	}
+	if a.loading {
+		frame := spinnerFrames[a.spinnerFrame%len(spinnerFrames)]
+		countStr += " " + frame
+	}
 	countStyled := lipgloss.NewStyle().Foreground(theme.ColorLavender).Bold(true).Render(countStr)
 
 	if left != "" {

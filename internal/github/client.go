@@ -137,7 +137,8 @@ func (c *Client) ListNotifications(opts ListOptions) (ListResult, error) {
 		return ListResult{}, fmt.Errorf("decoding notifications: %w", err)
 	}
 
-	hasNext := hasNextPage(resp.Header.Get("Link"))
+	linkHeader := resp.Header.Get("Link")
+	hasNext := hasNextPage(linkHeader)
 
 	return ListResult{
 		Notifications: notifications,
