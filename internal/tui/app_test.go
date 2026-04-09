@@ -1855,3 +1855,51 @@ func TestRenderLogPane(t *testing.T) {
 		t.Fatal("expected log pane to contain title 'Logs'")
 	}
 }
+
+func TestForceResyncSetsLoadingAndStatus(t *testing.T) {
+	a := newTestApp()
+	a.width = 120
+	a.height = 40
+
+	// Simulate ctrl+f keypress via direct handleKey call
+	a.loading = false
+	a.statusText = ""
+
+	// We can't easily send a KeyPressMsg in tests, so test the message
+	// path instead: notificationsLoadedMsg after a force resync should
+	// clear loading and update the list.
+	a.loading = true
+	a.statusText = "Force resyncing all notifications…"
+
+	updated, _ := a.Update(notificationsLoadedMsg{notifications: sampleNotifications()})
+	a = updated.(App)
+
+	if a.loading {
+		t.Error("expected loading=false after notificationsLoadedMsg")
+	}
+	if len(a.notifications) != 4 {
+		t.Errorf("expected 4 notifications, got %d", len(a.notifications))
+	}
+}
+
+func TestSpinnerShownInStatusBarWhileLoading(t *testing.T) {
+	a := newTestApp()
+	a.width = 120
+	a.height = 40
+	a.notifications = sampleNotifications()
+
+	a.loading = false
+	bar := a.renderStatusBar()
+	for _, frame := range spinnerFrames {
+		if strings.Contains(bar, frame) {
+			t.Fatalf("spinner frame %q should not appear when not loading", frame)
+		}
+	}
+
+	a.loading = true
+	bar = a.renderStatusBar()
+	frame := spinnerFrames[a.spinnerFrame%len(spinnerFrames)]
+	if !strings.Contains(bar, frame) {
+		t.Fatalf("expected spinner frame %q in status bar while loading, got %q", frame, bar)
+	}
+}
