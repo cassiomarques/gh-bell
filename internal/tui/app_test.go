@@ -1128,3 +1128,37 @@ func TestPreviewUpdatesAfterUnsubscribe(t *testing.T) {
 		t.Error("should return a cmd batch after unsubscribe")
 	}
 }
+
+func TestPreviewPaneActionsDelegate(t *testing.T) {
+a := newTestApp()
+a.detailCache = make(map[string]*github.ThreadDetail)
+a.focused = focusPreview
+initialCount := len(a.notifications)
+
+// 'r' from preview pane should delegate to list handler and mark read
+result, cmd := a.handlePreviewKey("r")
+_ = result
+if cmd == nil {
+t.Error("pressing 'r' in preview pane should trigger mark-read command")
+}
+
+// 'enter' from preview pane should trigger browser open
+a2 := newTestApp()
+a2.focused = focusPreview
+_, cmd2 := a2.handlePreviewKey("enter")
+if cmd2 == nil {
+t.Error("pressing 'enter' in preview pane should trigger browser open command")
+}
+
+// j/k should NOT delegate — they scroll the preview instead
+a3 := newTestApp()
+a3.focused = focusPreview
+a3.previewScroll = 0
+result3, _ := a3.handlePreviewKey("j")
+updated3 := result3.(App)
+if updated3.previewScroll != 1 {
+t.Error("'j' in preview pane should scroll preview, not navigate list")
+}
+
+_ = initialCount
+}

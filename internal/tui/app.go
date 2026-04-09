@@ -431,7 +431,9 @@ func (a App) handlePreviewKey(key string) (tea.Model, tea.Cmd) {
 		}
 		return a, nil
 	}
-	return a, nil
+	// Actions (r, m, u, enter, etc.) work from the preview pane too —
+	// delegate to the list key handler so you don't have to switch focus.
+	return a.handleListKey(key)
 }
 
 func (a App) handleListKey(key string) (tea.Model, tea.Cmd) {
