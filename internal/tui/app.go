@@ -950,6 +950,10 @@ func (a App) renderTabs() string {
 	} else {
 		countText = fmt.Sprintf("  %d items", total)
 	}
+	if a.loading {
+		frame := spinnerFrames[a.spinnerFrame%len(spinnerFrames)]
+		countText += "  " + frame + " syncing…"
+	}
 	counter := lipgloss.NewStyle().
 		Foreground(theme.ColorOverlay1).
 		Render(countText)
