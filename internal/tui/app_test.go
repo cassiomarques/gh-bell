@@ -1876,6 +1876,9 @@ func TestRenderLogPane(t *testing.T) {
 	if !strings.Contains(rendered, "Logs") {
 		t.Fatal("expected log pane to contain title 'Logs'")
 	}
+	if !strings.Contains(rendered, "─") {
+		t.Fatal("expected log pane to contain separator line")
+	}
 }
 
 func TestForceResyncSetsLoadingAndStatus(t *testing.T) {

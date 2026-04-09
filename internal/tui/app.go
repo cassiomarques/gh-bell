@@ -1473,7 +1473,7 @@ func (a App) renderLogPane() string {
 		Render(title + focusHint)
 
 	// Log content
-	visibleLines := logH - 1 // subtract title bar
+	visibleLines := logH - 2 // subtract title bar + separator line
 	start := a.logScroll
 	if start < 0 {
 		start = 0
@@ -1499,7 +1499,13 @@ func (a App) renderLogPane() string {
 		lines = append(lines, logStyle.Render(""))
 	}
 
-	return titleBar + "\n" + strings.Join(lines, "\n")
+	// Separator line above the log pane
+	separator := lipgloss.NewStyle().
+		Foreground(theme.ColorSurface2).
+		Width(a.width).
+		Render(strings.Repeat("─", a.width))
+
+	return separator + "\n" + titleBar + "\n" + strings.Join(lines, "\n")
 }
 
 func (a App) renderStatusBar() string {
