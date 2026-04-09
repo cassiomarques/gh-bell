@@ -44,9 +44,13 @@ token: ghp_your_token
 
 # Auto-refresh interval in seconds (default: 60).
 refresh_interval: 60
+
+# Auto-cleanup: remove read notifications older than N days (default: 15).
+# Set to 0 to disable.
+cleanup_days: 15
 ```
 
-Environment variables `GH_BELL_TOKEN` and `GH_BELL_REFRESH` still work and **override** the config file (useful for CI or one-off runs).
+Environment variables `GH_BELL_TOKEN`, `GH_BELL_REFRESH`, and `GH_BELL_CLEANUP_DAYS` still work and **override** the config file (useful for CI or one-off runs).
 
 ## Features
 
@@ -54,14 +58,16 @@ Environment variables `GH_BELL_TOKEN` and `GH_BELL_REFRESH` still work and **ove
 - **Three views** — Unread (`1`), All (`2`), Participating (`3`)
 - **Rich filtering** — repo (`/`), title search (`s`), reason (`f`), type (`t`), org (`o`), age (`a`), participating (`p`) — all combinable
 - **Full-text search** — `S` searches notification titles, bodies, comments, labels, and more using [Bleve](https://blevesearch.com/)
-- **Actions** — `r` mark read, `R` mark all, `m` mute, `u` unsubscribe
+- **Actions** — `r` mark read, `R` mark all visible, `m` mute, `M` mute all visible, `u` unsubscribe
 - **Open in browser** — `Enter` opens the notification and marks it as read
 - **Preview pane** — shows notification details with markdown rendering (via [glamour](https://github.com/charmbracelet/glamour))
 - **Local persistence** — SQLite cache for fast startup + persistent mutes; Bleve index for offline full-text search
 - **Remembered preferences** — last active view is restored on next launch
 - **New notification indicators** — `•` prefix and green tint for items that appeared since last refresh
 - **Color-coded reasons** — each notification reason (review, mention, assign, etc.) has a distinct color
-- **Auto-refresh** — configurable polling interval (default 60s, set `GH_BELL_REFRESH`)
+- **Auto-refresh** — configurable polling interval (default 60s)
+- **Auto-cleanup** — removes old read notifications from local cache (default: 15 days, configurable)
+- **Log pane** — `Ctrl+L` toggles a live log viewer for debugging
 - **Notification count** — status bar shows filtered/total count
 - **Catppuccin Mocha theme** — beautiful terminal colors out of the box
 
@@ -83,8 +89,9 @@ Environment variables `GH_BELL_TOKEN` and `GH_BELL_REFRESH` still work and **ove
 |-----|--------|
 | `Enter` | Open in browser (also marks as read) |
 | `r` | Mark as read |
-| `R` | Mark all as read |
+| `R` | Mark all visible as read |
 | `m` | Mute thread |
+| `M` | Mute all visible |
 | `u` | Unsubscribe |
 
 ### Filters & Views
@@ -122,10 +129,13 @@ Search covers titles, issue/PR bodies, comments, labels, repo names, and notific
 | Key | Action |
 |-----|--------|
 | `Ctrl+R` | Refresh notifications |
+| `Ctrl+L` | Toggle log pane |
 | `?` | Toggle help overlay |
 | `q` | Quit |
 
 > All action keys (`r`, `m`, `u`, `Enter`) work from both the list and preview panes.
+> 
+> **Batch actions** (`R`, `M`) operate on the currently **visible** notifications only — apply filters or search first to narrow the scope, then batch-act on what you see.
 
 ## How It Works
 
@@ -139,7 +149,7 @@ gh-bell stores local data in `~/.gh-bell/`:
 
 | File | Purpose |
 |------|---------|
-| `config.yaml` | Configuration — token, refresh interval (0600 permissions) |
+| `config.yaml` | Configuration — token, refresh interval, cleanup days (0600 permissions) |
 | `meta.db` | SQLite database — cached notifications, thread details, mutes, preferences |
 | `search.bleve/` | Bleve full-text search index |
 | `gh-bell.log` | Debug log (overwritten each run) |
