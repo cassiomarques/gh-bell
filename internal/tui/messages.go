@@ -63,3 +63,20 @@ type threadDetailErrorMsg struct {
 
 // spinnerTickMsg advances the loading spinner animation frame.
 type spinnerTickMsg struct{}
+
+// cachedNotificationsLoadedMsg carries notifications loaded from the local
+// SQLite cache for instant startup (before the API refresh completes).
+type cachedNotificationsLoadedMsg struct {
+	notifications []github.Notification
+}
+
+// searchResultsMsg carries Bleve full-text search results.
+type searchResultsMsg struct {
+	threadIDs []string // matching thread IDs
+	query     string   // the query that produced these results
+}
+
+// currentUserMsg carries the authenticated user's login, fetched once at startup.
+type currentUserMsg struct {
+	login string
+}

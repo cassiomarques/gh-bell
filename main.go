@@ -10,15 +10,25 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/cassiomarques/gh-bell/internal/github"
+	"github.com/cassiomarques/gh-bell/internal/search"
+	"github.com/cassiomarques/gh-bell/internal/service"
+	"github.com/cassiomarques/gh-bell/internal/storage"
 	"github.com/cassiomarques/gh-bell/internal/tui"
 )
 
 func setupLogging() (*os.File, error) {
-	dir, err := os.UserHomeDir()
+	dir, err := storage.DataDir()
 	if err != nil {
-		dir = os.TempDir()
+		dir, _ = os.UserHomeDir()
+		if dir == "" {
+			dir = os.TempDir()
+		}
 	}
-	logPath := filepath.Join(dir, ".gh-bell.log")
+	// Ensure data directory exists
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return nil, err
+	}
+	logPath := filepath.Join(dir, "gh-bell.log")
 	f, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
 	if err != nil {
 		return nil, err
@@ -51,6 +61,37 @@ func main() {
 	}
 	log.Println("client created successfully")
 
+	// Initialize SQLite store for local persistence
+	dbPath, err := storage.DefaultDBPath()
+	if err != nil {
+		log.Printf("warning: could not determine DB path: %v", err)
+		fmt.Fprintf(os.Stderr, "Warning: local cache disabled: %v\n", err)
+	}
+
+	var svc *service.NotificationService
+	if dbPath != "" {
+		store, err := storage.Open(dbPath)
+		if err != nil {
+			log.Printf("warning: could not open database at %s: %v", dbPath, err)
+			fmt.Fprintf(os.Stderr, "Warning: local cache disabled: %v\n", err)
+		} else {
+			svc = service.New(client, store)
+			defer svc.Close()
+			log.Printf("SQLite store opened at %s", dbPath)
+
+			// Initialize Bleve search index
+			dataDir, _ := storage.DataDir()
+			indexPath := filepath.Join(dataDir, "search.bleve")
+			searchIdx, err := search.Open(indexPath)
+			if err != nil {
+				log.Printf("warning: could not open search index: %v", err)
+			} else {
+				svc.SetSearch(searchIdx)
+				log.Printf("Bleve search index opened at %s", indexPath)
+			}
+		}
+	}
+
 	// Parse optional refresh interval from GH_BELL_REFRESH (seconds)
 	var refreshInterval time.Duration
 	if s := os.Getenv("GH_BELL_REFRESH"); s != "" {
@@ -62,7 +103,11 @@ func main() {
 		}
 	}
 
-	app := tui.NewApp(client, tui.WithRefreshInterval(refreshInterval))
+	opts := []tui.Option{tui.WithRefreshInterval(refreshInterval)}
+	if svc != nil {
+		opts = append(opts, tui.WithService(svc))
+	}
+	app := tui.NewApp(client, opts...)
 	p := tea.NewProgram(app)
 
 	log.Println("starting TUI")

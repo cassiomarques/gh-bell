@@ -45,13 +45,14 @@ type ThreadSubscription struct {
 // ThreadDetail holds enriched data fetched lazily for the preview pane.
 type ThreadDetail struct {
 	// From subject URL (issue/PR/release)
-	State    string   `json:"state"`
-	Body     string   `json:"body"`
-	Labels   []Label  `json:"labels"`
-	User     User     `json:"user"`
-	Draft    bool     `json:"draft"`
-	Merged   bool     `json:"merged"`
-	MergedBy *User    `json:"merged_by"`
+	State     string   `json:"state"`
+	Body      string   `json:"body"`
+	Labels    []Label  `json:"labels"`
+	User      User     `json:"user"`
+	Assignees []User   `json:"assignees"`
+	Draft     bool     `json:"draft"`
+	Merged    bool     `json:"merged"`
+	MergedBy  *User    `json:"merged_by"`
 	// PR-specific
 	Additions int `json:"additions"`
 	Deletions int `json:"deletions"`
