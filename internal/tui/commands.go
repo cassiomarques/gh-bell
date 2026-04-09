@@ -105,6 +105,8 @@ func markAllReadCmd(client *github.Client) tea.Cmd {
 }
 
 // muteThreadCmd returns a Cmd that mutes a notification thread.
+// Also marks the thread as read so it disappears from the unread list —
+// GitHub's mute only prevents future notifications, it doesn't remove existing ones.
 func muteThreadCmd(client *github.Client, threadID string) tea.Cmd {
 	return func() tea.Msg {
 		if err := client.MuteThread(threadID); err != nil {
@@ -113,11 +115,16 @@ func muteThreadCmd(client *github.Client, threadID string) tea.Cmd {
 			}
 			return errorMsg{err: err}
 		}
+		// Mark as read so it doesn't reappear on refresh
+		if err := client.MarkThreadRead(threadID); err != nil {
+			log.Printf("mute: thread muted but failed to mark read: %v", err)
+		}
 		return threadMutedMsg{threadID: threadID}
 	}
 }
 
 // unsubscribeCmd returns a Cmd that unsubscribes from a notification thread.
+// Also marks the thread as read so it disappears from the unread list.
 func unsubscribeCmd(client *github.Client, threadID string) tea.Cmd {
 	return func() tea.Msg {
 		if err := client.UnsubscribeThread(threadID); err != nil {
@@ -125,6 +132,9 @@ func unsubscribeCmd(client *github.Client, threadID string) tea.Cmd {
 				return errorMsg{err: authErrorMessage(err)}
 			}
 			return errorMsg{err: err}
+		}
+		if err := client.MarkThreadRead(threadID); err != nil {
+			log.Printf("unsubscribe: unsubscribed but failed to mark read: %v", err)
 		}
 		return threadUnsubscribedMsg{threadID: threadID}
 	}
