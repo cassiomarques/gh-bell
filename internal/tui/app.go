@@ -227,29 +227,33 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case threadMarkedReadMsg:
 		a.removeNotification(msg.threadID)
+		a.previewScroll = 0
 		a.statusText = "Marked as read"
 		a.statusError = false
-		return a, clearStatusCmd()
+		return a, tea.Batch(clearStatusCmd(), a.maybeFetchDetail())
 
 	case allMarkedReadMsg:
 		a.notifications = nil
 		a.cursor = 0
 		a.offset = 0
+		a.previewScroll = 0
 		a.statusText = "All marked as read"
 		a.statusError = false
 		return a, clearStatusCmd()
 
 	case threadMutedMsg:
 		a.removeNotification(msg.threadID)
+		a.previewScroll = 0
 		a.statusText = "Thread muted"
 		a.statusError = false
-		return a, clearStatusCmd()
+		return a, tea.Batch(clearStatusCmd(), a.maybeFetchDetail())
 
 	case threadUnsubscribedMsg:
 		a.removeNotification(msg.threadID)
+		a.previewScroll = 0
 		a.statusText = "Unsubscribed"
 		a.statusError = false
-		return a, clearStatusCmd()
+		return a, tea.Batch(clearStatusCmd(), a.maybeFetchDetail())
 
 	case clearStatusMsg:
 		a.statusText = ""

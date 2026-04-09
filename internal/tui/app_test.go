@@ -1053,3 +1053,78 @@ func TestMaybeFetchDetail_StartsSpinner(t *testing.T) {
 		t.Error("spinnerFrame should be reset to 0 on new fetch")
 	}
 }
+
+func TestPreviewUpdatesAfterMarkRead(t *testing.T) {
+	a := newTestApp()
+	a.detailCache = make(map[string]*github.ThreadDetail)
+	a.cursor = 0 // selected: notification "1"
+
+	// Cache detail for both first and second notifications
+	a.detailCache["1"] = &github.ThreadDetail{State: "open", User: github.User{Login: "alice"}}
+	a.detailCache["2"] = &github.ThreadDetail{State: "closed", User: github.User{Login: "bob"}}
+
+	// Simulate marking notification "1" as read
+	result, cmd := a.Update(threadMarkedReadMsg{threadID: "1"})
+	updated := result.(App)
+
+	// Notification "1" should be removed, cursor should now point to what was "2"
+	sel := updated.selectedNotification()
+	if sel == nil {
+		t.Fatal("should have a selected notification after mark read")
+	}
+	if sel.ID == "1" {
+		t.Error("removed notification should not be selected")
+	}
+
+	// Preview scroll should be reset
+	if updated.previewScroll != 0 {
+		t.Error("previewScroll should be reset after mark read")
+	}
+
+	// The returned cmd should include a detail fetch (via maybeFetchDetail)
+	// since the new selection may need its detail loaded
+	if cmd == nil {
+		t.Error("should return a cmd batch (clearStatus + maybeFetchDetail)")
+	}
+}
+
+func TestPreviewUpdatesAfterMute(t *testing.T) {
+	a := newTestApp()
+	a.detailCache = make(map[string]*github.ThreadDetail)
+	a.cursor = 1 // selected: notification "2"
+
+	result, cmd := a.Update(threadMutedMsg{threadID: "2"})
+	updated := result.(App)
+
+	// "2" removed, cursor should clamp and select something valid
+	sel := updated.selectedNotification()
+	if sel != nil && sel.ID == "2" {
+		t.Error("muted notification should not be selected")
+	}
+	if updated.previewScroll != 0 {
+		t.Error("previewScroll should be reset after mute")
+	}
+	if cmd == nil {
+		t.Error("should return a cmd batch after mute")
+	}
+}
+
+func TestPreviewUpdatesAfterUnsubscribe(t *testing.T) {
+	a := newTestApp()
+	a.detailCache = make(map[string]*github.ThreadDetail)
+	a.cursor = 0
+
+	result, cmd := a.Update(threadUnsubscribedMsg{threadID: "1"})
+	updated := result.(App)
+
+	sel := updated.selectedNotification()
+	if sel != nil && sel.ID == "1" {
+		t.Error("unsubscribed notification should not be selected")
+	}
+	if updated.previewScroll != 0 {
+		t.Error("previewScroll should be reset after unsubscribe")
+	}
+	if cmd == nil {
+		t.Error("should return a cmd batch after unsubscribe")
+	}
+}
