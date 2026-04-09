@@ -2,6 +2,7 @@
 
 A terminal UI for managing GitHub notifications. Built as a `gh` CLI extension.
 
+[![CI](https://github.com/cassiomarques/gh-bell/actions/workflows/ci.yml/badge.svg)](https://github.com/cassiomarques/gh-bell/actions/workflows/ci.yml)
 ![Go](https://img.shields.io/badge/Go-1.25-blue)
 
 ## Install
