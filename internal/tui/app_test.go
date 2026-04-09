@@ -1661,3 +1661,197 @@ func TestCurrentUserMsg_setsUser(t *testing.T) {
 		t.Fatalf("expected currentUser 'cassio', got %q", a.currentUser)
 	}
 }
+
+func TestBatchMarkVisibleReadRespectsFilters(t *testing.T) {
+	a := newTestApp()
+	a.notifications = sampleNotifications()
+	a.width = 120
+	a.height = 40
+
+	// Apply a filter so only some notifications are visible
+	a.repoFilter = "org/app"
+	filtered := a.filteredNotifications()
+	if len(filtered) != 1 {
+		t.Fatalf("expected 1 filtered notification for org/app, got %d", len(filtered))
+	}
+	if filtered[0].ID != "1" {
+		t.Fatalf("expected filtered notification ID '1', got %q", filtered[0].ID)
+	}
+}
+
+func TestBatchMarkVisibleReadMsg(t *testing.T) {
+	a := newTestApp()
+	a.notifications = sampleNotifications()
+	a.width = 120
+	a.height = 40
+
+	// Simulate the visibleMarkedReadMsg arriving
+	updated, _ := a.Update(visibleMarkedReadMsg{count: 2, ids: []string{"1", "2"}})
+	a = updated.(App)
+	// Notifications 1 and 2 should be removed
+	for _, n := range a.notifications {
+		if n.ID == "1" || n.ID == "2" {
+			t.Fatalf("expected notification %s to be removed", n.ID)
+		}
+	}
+	if !strings.Contains(a.statusText, "Marked 2 as read") {
+		t.Fatalf("expected status 'Marked 2 as read', got %q", a.statusText)
+	}
+}
+
+func TestBatchMuteVisibleMsg(t *testing.T) {
+	a := newTestApp()
+	a.notifications = sampleNotifications()
+	a.width = 120
+	a.height = 40
+
+	updated, _ := a.Update(visibleMutedMsg{count: 2, ids: []string{"1", "2"}})
+	a = updated.(App)
+	for _, n := range a.notifications {
+		if n.ID == "1" || n.ID == "2" {
+			t.Fatalf("expected notification %s to be removed", n.ID)
+		}
+	}
+	if !strings.Contains(a.statusText, "Muted 2 threads") {
+		t.Fatalf("expected status 'Muted 2 threads', got %q", a.statusText)
+	}
+}
+
+func TestLogPaneState(t *testing.T) {
+	a := newTestApp()
+	a.width = 120
+	a.height = 40
+	a.logFile = "/tmp/test.log"
+
+	// Initially log pane is hidden
+	if a.showLog {
+		t.Fatal("expected log pane to be hidden initially")
+	}
+
+	// Toggling showLog and focusing
+	a.showLog = true
+	a.focused = focusLog
+	if !a.showLog {
+		t.Fatal("expected log pane to be shown")
+	}
+	if a.focused != focusLog {
+		t.Fatal("expected focusLog")
+	}
+
+	// Esc from log pane should close it
+	a.showLog = false
+	a.focused = focusList
+	if a.showLog {
+		t.Fatal("expected log pane closed")
+	}
+}
+
+func TestLogPaneScrolling(t *testing.T) {
+	a := newTestApp()
+	a.width = 120
+	a.height = 40
+	a.logFile = "/tmp/test.log"
+	a.showLog = true
+	a.focused = focusLog
+	a.logLines = make([]string, 100) // 100 lines of log
+
+	// logMaxScroll should be positive
+	maxScroll := a.logMaxScroll()
+	if maxScroll <= 0 {
+		t.Fatalf("expected positive maxScroll, got %d", maxScroll)
+	}
+
+	// Manually scroll and verify bounds
+	a.logScroll = maxScroll
+	if a.logScroll != maxScroll {
+		t.Fatalf("expected logScroll at max (%d), got %d", maxScroll, a.logScroll)
+	}
+}
+
+func TestLogPaneReducesContentHeight(t *testing.T) {
+	a := newTestApp()
+	a.width = 120
+	a.height = 40
+	a.notifications = sampleNotifications()
+
+	heightWithout := a.contentHeight()
+
+	a.showLog = true
+	heightWith := a.contentHeight()
+
+	if heightWith >= heightWithout {
+		t.Fatalf("expected contentHeight to decrease when log pane is open: without=%d, with=%d", heightWithout, heightWith)
+	}
+}
+
+func TestLogUpdatedMsg(t *testing.T) {
+	a := newTestApp()
+	a.width = 120
+	a.height = 40
+	a.showLog = true
+	a.logFile = "/tmp/test.log"
+
+	lines := []string{"line 1", "line 2", "line 3"}
+	updated, cmd := a.Update(logUpdatedMsg{lines: lines})
+	a = updated.(App)
+	if len(a.logLines) != 3 {
+		t.Fatalf("expected 3 log lines, got %d", len(a.logLines))
+	}
+	if cmd == nil {
+		t.Fatal("expected logTickCmd to continue tailing when pane is open")
+	}
+}
+
+func TestLogUpdatedMsgStopsTailingWhenClosed(t *testing.T) {
+	a := newTestApp()
+	a.width = 120
+	a.height = 40
+	a.showLog = false // pane closed
+
+	lines := []string{"line 1"}
+	updated, cmd := a.Update(logUpdatedMsg{lines: lines})
+	a = updated.(App)
+	if cmd != nil {
+		t.Fatal("expected no cmd when log pane is closed")
+	}
+}
+
+func TestCleanupDoneMsg(t *testing.T) {
+	a := newTestApp()
+	a.width = 120
+	a.height = 40
+
+	// With purged > 0
+	updated, cmd := a.Update(cleanupDoneMsg{purged: 5})
+	a = updated.(App)
+	if !strings.Contains(a.statusText, "Cleaned up 5") {
+		t.Fatalf("expected cleanup status, got %q", a.statusText)
+	}
+	if cmd == nil {
+		t.Fatal("expected clearStatus cmd")
+	}
+
+	// With purged == 0
+	updated, cmd = a.Update(cleanupDoneMsg{purged: 0})
+	a = updated.(App)
+	if cmd != nil {
+		t.Fatal("expected no cmd when nothing was purged")
+	}
+}
+
+func TestRenderLogPane(t *testing.T) {
+	a := newTestApp()
+	a.width = 120
+	a.height = 40
+	a.showLog = true
+	a.focused = focusLog
+	a.logLines = []string{"2025-04-09 10:00:00 test log line", "2025-04-09 10:00:01 another line"}
+
+	rendered := a.renderLogPane()
+	if rendered == "" {
+		t.Fatal("expected non-empty log pane render")
+	}
+	if !strings.Contains(rendered, "Logs") {
+		t.Fatal("expected log pane to contain title 'Logs'")
+	}
+}

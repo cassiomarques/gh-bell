@@ -3,6 +3,8 @@ package tui
 import (
 	"fmt"
 	"log"
+	"os"
+	"strings"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -272,4 +274,91 @@ func fetchCurrentUserCmd(client github.NotificationAPI) tea.Cmd {
 		log.Printf("current user: %s", login)
 		return currentUserMsg{login: login}
 	}
+}
+
+// markVisibleReadCmd marks a batch of notifications as read one by one.
+// Used by the R keybinding to act on only the filtered/visible notifications.
+func markVisibleReadCmd(client github.NotificationAPI, svc *service.NotificationService, notifications []github.Notification) tea.Cmd {
+	return func() tea.Msg {
+		var ids []string
+		for _, n := range notifications {
+			var err error
+			if svc != nil {
+				err = svc.MarkThreadRead(n.ID)
+			} else if client != nil {
+				err = client.MarkThreadRead(n.ID)
+			}
+			if err != nil {
+				log.Printf("batch mark-read: error on %s: %v", n.ID, err)
+				if github.IsAuthError(err) {
+					return errorMsg{err: authErrorMessage(err)}
+				}
+				continue
+			}
+			ids = append(ids, n.ID)
+		}
+		log.Printf("batch mark-read: marked %d/%d", len(ids), len(notifications))
+		return visibleMarkedReadMsg{count: len(ids), ids: ids}
+	}
+}
+
+// muteVisibleCmd mutes a batch of notifications one by one.
+// Used by the M keybinding to act on only the filtered/visible notifications.
+func muteVisibleCmd(client github.NotificationAPI, svc *service.NotificationService, notifications []github.Notification) tea.Cmd {
+	return func() tea.Msg {
+		var ids []string
+		for _, n := range notifications {
+			var err error
+			if svc != nil {
+				err = svc.MuteThread(n.ID, n.Repository.FullName, n.Subject.Title)
+			} else if client != nil {
+				err = client.MuteThread(n.ID)
+				if err == nil {
+					if readErr := client.MarkThreadRead(n.ID); readErr != nil {
+						log.Printf("batch mute: thread muted but failed to mark read: %v", readErr)
+					}
+				}
+			}
+			if err != nil {
+				log.Printf("batch mute: error on %s: %v", n.ID, err)
+				if github.IsAuthError(err) {
+					return errorMsg{err: authErrorMessage(err)}
+				}
+				continue
+			}
+			ids = append(ids, n.ID)
+		}
+		log.Printf("batch mute: muted %d/%d", len(ids), len(notifications))
+		return visibleMutedMsg{count: len(ids), ids: ids}
+	}
+}
+
+// cleanupCmd runs age-based cleanup of old read notifications on startup.
+func cleanupCmd(svc *service.NotificationService, days int) tea.Cmd {
+	return func() tea.Msg {
+		if svc == nil || days <= 0 {
+			return nil
+		}
+		purged, err := svc.Cleanup(days)
+		if err != nil {
+			log.Printf("cleanup: error: %v", err)
+			return nil
+		}
+		if purged > 0 {
+			log.Printf("cleanup: purged %d old notifications (older than %d days)", purged, days)
+		}
+		return cleanupDoneMsg{purged: purged}
+	}
+}
+
+// logTickCmd tails the log file periodically while the log pane is open.
+func logTickCmd(logFile string) tea.Cmd {
+	return tea.Tick(500*time.Millisecond, func(time.Time) tea.Msg {
+		data, err := os.ReadFile(logFile)
+		if err != nil {
+			return logUpdatedMsg{lines: []string{"(error reading log: " + err.Error() + ")"}}
+		}
+		lines := strings.Split(string(data), "\n")
+		return logUpdatedMsg{lines: lines}
+	})
 }

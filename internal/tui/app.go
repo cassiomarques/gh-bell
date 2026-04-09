@@ -20,6 +20,7 @@ type focusedPane int
 const (
 	focusList focusedPane = iota
 	focusPreview
+	focusLog
 )
 
 // filterMode tracks whether the user is typing a filter query.
@@ -112,6 +113,15 @@ type App struct {
 	// Configurable refresh interval (0 means use default)
 	refreshInterval time.Duration
 
+	// Log pane
+	showLog   bool
+	logLines  []string
+	logScroll int
+	logFile   string // path to the log file for tailing
+
+	// Cleanup
+	cleanupDays int
+
 	// Header cache (rebuilt on resize)
 	headerCache string
 }
@@ -131,6 +141,20 @@ func WithRefreshInterval(d time.Duration) Option {
 func WithService(svc *service.NotificationService) Option {
 	return func(a *App) {
 		a.service = svc
+	}
+}
+
+// WithLogFile sets the path to the log file for the log pane.
+func WithLogFile(path string) Option {
+	return func(a *App) {
+		a.logFile = path
+	}
+}
+
+// WithCleanupDays sets the number of days for auto-cleanup of old notifications.
+func WithCleanupDays(days int) Option {
+	return func(a *App) {
+		a.cleanupDays = days
 	}
 }
 
@@ -175,6 +199,13 @@ func (a App) Init() tea.Cmd {
 		cmds = append(cmds, loadCachedNotificationsCmd(a.service, a.currentView))
 	}
 	cmds = append(cmds, fetchNotificationsCmd(a.client, a.service, a.currentView))
+
+	// Run age-based cleanup of old read notifications on startup.
+	// This is a deferred effect (tea.Cmd) — Init never does I/O directly,
+	// it returns commands that Bubble Tea executes asynchronously.
+	if a.service != nil && a.cleanupDays > 0 {
+		cmds = append(cmds, cleanupCmd(a.service, a.cleanupDays))
+	}
 
 	return tea.Batch(cmds...)
 }
@@ -329,6 +360,44 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.statusError = false
 		return a, tea.Batch(clearStatusCmd(), a.maybeFetchDetail())
 
+	case visibleMarkedReadMsg:
+		for _, id := range msg.ids {
+			a.removeNotification(id)
+		}
+		a.previewScroll = 0
+		a.statusText = fmt.Sprintf("Marked %d as read", msg.count)
+		a.statusError = false
+		return a, tea.Batch(clearStatusCmd(), a.maybeFetchDetail())
+
+	case visibleMutedMsg:
+		for _, id := range msg.ids {
+			a.removeNotification(id)
+		}
+		a.previewScroll = 0
+		a.statusText = fmt.Sprintf("Muted %d threads", msg.count)
+		a.statusError = false
+		return a, tea.Batch(clearStatusCmd(), a.maybeFetchDetail())
+
+	case cleanupDoneMsg:
+		if msg.purged > 0 {
+			a.statusText = fmt.Sprintf("Cleaned up %d old entries", msg.purged)
+			a.statusError = false
+			return a, clearStatusCmd()
+		}
+		return a, nil
+
+	case logUpdatedMsg:
+		a.logLines = msg.lines
+		// Auto-scroll to bottom if already at the end
+		maxScroll := a.logMaxScroll()
+		if a.logScroll >= maxScroll-1 || a.logScroll == 0 {
+			a.logScroll = maxScroll
+		}
+		if a.showLog {
+			return a, logTickCmd(a.logFile)
+		}
+		return a, nil
+
 	case clearStatusMsg:
 		a.statusText = ""
 		a.statusError = false
@@ -433,6 +502,20 @@ func (a App) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			a.focused = focusList
 		}
 		return a, nil
+	case "ctrl+l":
+		a.showLog = !a.showLog
+		if a.showLog {
+			a.focused = focusLog
+			// Start tailing the log file
+			if a.logFile != "" {
+				return a, logTickCmd(a.logFile)
+			}
+		} else {
+			if a.focused == focusLog {
+				a.focused = focusList
+			}
+		}
+		return a, nil
 	case "/":
 		a.filterInput = filterRepo
 		a.filterBuf = a.repoFilter
@@ -457,6 +540,12 @@ func (a App) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return a, nil
 		}
 	case "escape", "esc":
+		// If log pane is focused, close it
+		if a.focused == focusLog {
+			a.showLog = false
+			a.focused = focusList
+			return a, nil
+		}
 		// Clear all filters
 		if a.hasActiveFilters() {
 			a.repoFilter = ""
@@ -480,6 +569,9 @@ func (a App) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	}
 	if a.focused == focusPreview {
 		return a.handlePreviewKey(key)
+	}
+	if a.focused == focusLog {
+		return a.handleLogKey(key)
 	}
 
 	return a, nil
@@ -574,6 +666,60 @@ func (a App) handlePreviewKey(key string) (tea.Model, tea.Cmd) {
 	return a.handleListKey(key)
 }
 
+func (a App) handleLogKey(key string) (tea.Model, tea.Cmd) {
+	switch key {
+	case "j", "down":
+		maxScroll := a.logMaxScroll()
+		if a.logScroll < maxScroll {
+			a.logScroll++
+		}
+		return a, nil
+	case "k", "up":
+		if a.logScroll > 0 {
+			a.logScroll--
+		}
+		return a, nil
+	case "g":
+		now := time.Now()
+		if a.lastKey == "g" && now.Sub(a.lastKeyTime) < 500*time.Millisecond {
+			a.logScroll = 0
+			a.lastKey = ""
+			return a, nil
+		}
+		a.lastKey = "g"
+		a.lastKeyTime = now
+		return a, nil
+	case "G":
+		a.logScroll = a.logMaxScroll()
+		return a, nil
+	}
+	return a, nil
+}
+
+func (a App) logMaxScroll() int {
+	logH := a.logPaneHeight()
+	if logH <= 1 { // 1 for title bar
+		return 0
+	}
+	visibleLines := logH - 1 // subtract title bar
+	max := len(a.logLines) - visibleLines
+	if max < 0 {
+		return 0
+	}
+	return max
+}
+
+func (a App) logPaneHeight() int {
+	h := a.height / 3
+	if h < 5 {
+		h = 5
+	}
+	if h > a.height-5 {
+		h = a.height - 5
+	}
+	return h
+}
+
 func (a App) handleListKey(key string) (tea.Model, tea.Cmd) {
 	filtered := a.filteredNotifications()
 
@@ -616,11 +762,29 @@ func (a App) handleListKey(key string) (tea.Model, tea.Cmd) {
 			return a, markReadCmd(a.client, a.service, n.ID)
 		}
 	case "R":
-		return a, markAllReadCmd(a.client, a.service)
+		// Mark only the currently visible/filtered notifications as read.
+		// This respects all active filters and search — only what you see
+		// gets marked, not everything in the background.
+		filtered := a.filteredNotifications()
+		if len(filtered) == 0 {
+			return a, nil
+		}
+		a.statusText = fmt.Sprintf("Marking %d as read…", len(filtered))
+		a.statusError = false
+		return a, markVisibleReadCmd(a.client, a.service, filtered)
 	case "m":
 		if n := a.selectedNotification(); n != nil {
 			return a, muteThreadCmd(a.client, a.service, n.ID, n.Repository.FullName, n.Subject.Title)
 		}
+	case "M":
+		// Mute only the currently visible/filtered notifications.
+		filtered := a.filteredNotifications()
+		if len(filtered) == 0 {
+			return a, nil
+		}
+		a.statusText = fmt.Sprintf("Muting %d…", len(filtered))
+		a.statusError = false
+		return a, muteVisibleCmd(a.client, a.service, filtered)
 	case "u":
 		if n := a.selectedNotification(); n != nil {
 			return a, unsubscribeCmd(a.client, a.service, n.ID)
@@ -733,6 +897,11 @@ func (a App) View() tea.View {
 		} else {
 			b.WriteString(a.renderMainContent(filtered, contentHeight))
 		}
+	}
+
+	// Log pane (bottom split)
+	if a.showLog {
+		b.WriteString(a.renderLogPane())
 	}
 
 	// Status bar
@@ -1264,6 +1433,66 @@ func (a App) renderNotificationRow(n github.Notification, selected bool) string 
 	return style.Render(row)
 }
 
+func (a App) renderLogPane() string {
+	logH := a.logPaneHeight()
+	if logH < 2 {
+		return ""
+	}
+
+	// Title bar
+	titleStyle := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(theme.ColorBase).
+		Background(theme.ColorMauve).
+		Padding(0, 1)
+	title := titleStyle.Render("📋 Logs")
+
+	focusHint := ""
+	if a.focused == focusLog {
+		focusHint = lipgloss.NewStyle().
+			Foreground(theme.ColorMauve).
+			Render("  j/k:scroll  gg/G:top/bottom  Esc:close")
+	} else {
+		focusHint = lipgloss.NewStyle().
+			Foreground(theme.Dimmed).
+			Render("  Ctrl+L:close")
+	}
+
+	titleBar := lipgloss.NewStyle().
+		Width(a.width).
+		Background(theme.ColorSurface1).
+		Render(title + focusHint)
+
+	// Log content
+	visibleLines := logH - 1 // subtract title bar
+	start := a.logScroll
+	if start < 0 {
+		start = 0
+	}
+	end := start + visibleLines
+	if end > len(a.logLines) {
+		end = len(a.logLines)
+	}
+
+	logStyle := lipgloss.NewStyle().
+		Foreground(theme.Dimmed).
+		Width(a.width)
+
+	var lines []string
+	if start < len(a.logLines) {
+		for _, line := range a.logLines[start:end] {
+			lines = append(lines, logStyle.Render(line))
+		}
+	}
+
+	// Pad remaining lines
+	for len(lines) < visibleLines {
+		lines = append(lines, logStyle.Render(""))
+	}
+
+	return titleBar + "\n" + strings.Join(lines, "\n")
+}
+
 func (a App) renderStatusBar() string {
 	left := ""
 	if a.statusText != "" {
@@ -1603,6 +1832,9 @@ func (a App) contentHeight() int {
 	if a.hasActiveFilters() || a.filterInput != filterNone {
 		used++
 	}
+	if a.showLog {
+		used += a.logPaneHeight()
+	}
 	h := a.height - used
 	if h < 1 {
 		h = 1
@@ -1692,9 +1924,11 @@ func (a App) renderHelpOverlay() string {
 	b.WriteByte('\n')
 	b.WriteString(line("r", "Mark as read"))
 	b.WriteByte('\n')
-	b.WriteString(line("R", "Mark all as read"))
+	b.WriteString(line("R", "Mark all visible as read"))
 	b.WriteByte('\n')
 	b.WriteString(line("m", "Mute thread"))
+	b.WriteByte('\n')
+	b.WriteString(line("M", "Mute all visible"))
 	b.WriteByte('\n')
 	b.WriteString(line("u", "Unsubscribe"))
 	b.WriteByte('\n')
@@ -1744,6 +1978,8 @@ func (a App) renderHelpOverlay() string {
 	b.WriteString(line("?", "Toggle this help"))
 	b.WriteByte('\n')
 	b.WriteString(line("Ctrl+R", "Refresh notifications"))
+	b.WriteByte('\n')
+	b.WriteString(line("Ctrl+L", "Toggle log pane"))
 	b.WriteByte('\n')
 	b.WriteString(line("q", "Quit"))
 

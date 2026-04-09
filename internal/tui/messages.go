@@ -80,3 +80,25 @@ type searchResultsMsg struct {
 type currentUserMsg struct {
 	login string
 }
+
+// visibleMarkedReadMsg is sent after batch-marking all visible notifications as read.
+type visibleMarkedReadMsg struct {
+	count int
+	ids   []string
+}
+
+// visibleMutedMsg is sent after batch-muting all visible notifications.
+type visibleMutedMsg struct {
+	count int
+	ids   []string
+}
+
+// cleanupDoneMsg is sent after auto-cleanup of old notifications completes.
+type cleanupDoneMsg struct {
+	purged int
+}
+
+// logUpdatedMsg carries refreshed log file contents.
+type logUpdatedMsg struct {
+	lines []string
+}

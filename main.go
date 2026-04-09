@@ -109,6 +109,22 @@ func main() {
 	if svc != nil {
 		opts = append(opts, tui.WithService(svc))
 	}
+
+	// Pass log file path so the TUI can tail it in the log pane
+	logPath := ""
+	if dir, err := storage.DataDir(); err == nil {
+		logPath = filepath.Join(dir, "gh-bell.log")
+	}
+	if logPath != "" {
+		opts = append(opts, tui.WithLogFile(logPath))
+	}
+
+	// Pass cleanup config
+	if cfg.CleanupDays > 0 {
+		opts = append(opts, tui.WithCleanupDays(cfg.CleanupDays))
+		log.Printf("auto-cleanup set to %d days", cfg.CleanupDays)
+	}
+
 	app := tui.NewApp(client, opts...)
 	p := tea.NewProgram(app)
 
