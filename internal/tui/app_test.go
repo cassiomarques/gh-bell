@@ -1202,6 +1202,28 @@ func TestTabs_ShowsFilteredCount(t *testing.T) {
 	}
 }
 
+func TestTabs_ShowsSyncingSpinnerWhileLoading(t *testing.T) {
+	a := newTestApp()
+
+	// Not loading — no syncing indicator
+	a.loading = false
+	tabs := a.renderTabs()
+	if strings.Contains(tabs, "syncing") {
+		t.Errorf("tabs should not show 'syncing' when not loading, got: %q", tabs)
+	}
+
+	// Loading — should show spinner frame and syncing label
+	a.loading = true
+	tabs = a.renderTabs()
+	if !strings.Contains(tabs, "syncing") {
+		t.Errorf("tabs should show 'syncing…' while loading, got: %q", tabs)
+	}
+	frame := spinnerFrames[a.spinnerFrame%len(spinnerFrames)]
+	if !strings.Contains(tabs, frame) {
+		t.Errorf("tabs should show spinner frame %q while loading, got: %q", frame, tabs)
+	}
+}
+
 func TestWithRefreshInterval(t *testing.T) {
 	a := App{}
 	opt := WithRefreshInterval(30 * time.Second)
