@@ -122,10 +122,12 @@ Search covers titles, issue/PR bodies, comments, labels, repo names, and notific
 | `t` | Cycle type filter (Issue, PR, Release, etc.) |
 | `o` | Cycle org/owner filter |
 | `a` | Cycle age filter (24h, 7d, 30d) |
-| `x` | Cycle state filter (open, closed, merged, draft) |
+| `x` | Cycle state filter (open, closed, merged, draft)¹ |
 | `p` | Toggle participating-only |
 | `A` | Toggle assigned to me |
 | `Esc` | Clear all filters |
+
+> ¹ The state filter only matches notifications whose detail has already been loaded (by scrolling past them in the list). Notifications with unknown state are hidden when this filter is active.
 
 ### General
 

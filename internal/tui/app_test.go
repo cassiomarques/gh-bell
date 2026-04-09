@@ -1981,6 +1981,35 @@ func TestStateFilter(t *testing.T) {
 	}
 }
 
+func TestStateFilter_ExcludesUncachedNotifications(t *testing.T) {
+	a := newTestApp() // 4 notifications (IDs 1-4)
+
+	// Only cache details for 2 of the 4 notifications
+	a.detailCache["1"] = &github.ThreadDetail{State: "open"}
+	a.detailCache["3"] = &github.ThreadDetail{State: "closed", Merged: true}
+	a.collectFilterOptions()
+
+	// No filter — all 4 visible (uncached are still shown)
+	filtered := a.filteredNotifications()
+	if len(filtered) != 4 {
+		t.Errorf("no filter: got %d, want 4", len(filtered))
+	}
+
+	// Filter by "open" — only ID=1 matches; IDs 2,4 have no detail and are excluded
+	a.stateFilter = "open"
+	filtered = a.filteredNotifications()
+	if len(filtered) != 1 || filtered[0].ID != "1" {
+		t.Errorf("state:open with partial cache: got %d items, want 1 (ID=1)", len(filtered))
+	}
+
+	// Filter by "merged" — only ID=3 matches
+	a.stateFilter = "merged"
+	filtered = a.filteredNotifications()
+	if len(filtered) != 1 || filtered[0].ID != "3" {
+		t.Errorf("state:merged with partial cache: got %d items, want 1 (ID=3)", len(filtered))
+	}
+}
+
 func TestCycleStateFilter(t *testing.T) {
 	a := newTestApp()
 	a.detailCache["1"] = &github.ThreadDetail{State: "open"}
