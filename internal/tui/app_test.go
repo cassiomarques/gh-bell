@@ -968,10 +968,11 @@ func TestPreviewBodyNotTruncated(t *testing.T) {
 	a := newTestApp()
 	a.detailCache = make(map[string]*github.ThreadDetail)
 
-	// Create a long body with 20 lines worth of content
+	// Create a long body with 20 distinct paragraphs (separated by double newlines
+	// so glamour treats them as separate paragraphs)
 	var longBody string
 	for i := 1; i <= 20; i++ {
-		longBody += fmt.Sprintf("This is line number %d of the description body.\n", i)
+		longBody += fmt.Sprintf("Paragraph %d unique content.\n\n", i)
 	}
 
 	a.detailCache["1"] = &github.ThreadDetail{
@@ -980,18 +981,14 @@ func TestPreviewBodyNotTruncated(t *testing.T) {
 		Body:  longBody,
 	}
 
-	preview := a.renderPreview(50, 60) // enough height to fit everything
+	preview := a.renderPreview(80, 60) // enough height to fit everything
 
-	// All 20 lines should be present — no truncation
-	if strings.Contains(preview, "...") {
-		t.Error("preview should NOT truncate body with '...'")
+	// Check first and last paragraphs are both present (no truncation)
+	if !strings.Contains(preview, "Paragraph 1") {
+		t.Error("preview should contain first paragraph of body")
 	}
-	// Check first and last lines are both present
-	if !strings.Contains(preview, "line number 1") {
-		t.Error("preview should contain first line of body")
-	}
-	if !strings.Contains(preview, "line number 20") {
-		t.Error("preview should contain last line of body (no truncation)")
+	if !strings.Contains(preview, "Paragraph 20") {
+		t.Error("preview should contain last paragraph of body (no truncation)")
 	}
 }
 
@@ -999,10 +996,10 @@ func TestPreviewCommentNotTruncated(t *testing.T) {
 	a := newTestApp()
 	a.detailCache = make(map[string]*github.ThreadDetail)
 
-	// Create a long comment with 15 lines
+	// Create a long comment with 15 distinct paragraphs
 	var longComment string
 	for i := 1; i <= 15; i++ {
-		longComment += fmt.Sprintf("Comment line %d with some context.\n", i)
+		longComment += fmt.Sprintf("Comment paragraph %d with context.\n\n", i)
 	}
 
 	a.detailCache["1"] = &github.ThreadDetail{
@@ -1015,16 +1012,13 @@ func TestPreviewCommentNotTruncated(t *testing.T) {
 		},
 	}
 
-	preview := a.renderPreview(50, 60)
+	preview := a.renderPreview(80, 60)
 
-	if strings.Contains(preview, "...") {
-		t.Error("preview should NOT truncate comment with '...'")
+	if !strings.Contains(preview, "Comment paragraph 1") {
+		t.Error("preview should contain first paragraph of comment")
 	}
-	if !strings.Contains(preview, "Comment line 1") {
-		t.Error("preview should contain first line of comment")
-	}
-	if !strings.Contains(preview, "Comment line 15") {
-		t.Error("preview should contain last line of comment (no truncation)")
+	if !strings.Contains(preview, "Comment paragraph 15") {
+		t.Error("preview should contain last paragraph of comment (no truncation)")
 	}
 }
 

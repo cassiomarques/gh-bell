@@ -816,26 +816,26 @@ func (a App) renderEnrichedDetail(lines []string, detail *github.ThreadDetail, s
 		lines = append(lines, dim.Render("  Tag:     ")+val.Render(detail.TagName))
 	}
 
-	// Body (word-wrapped, full content — preview is scrollable)
+	// Body — rendered as markdown for rich formatting
 	if detail.Body != "" {
 		lines = append(lines, "")
 		lines = append(lines, dim.Render("  ─── Description ───"))
-		bodyLines := wordWrap(detail.Body, bodyWidth)
-		for _, bl := range bodyLines {
-			lines = append(lines, "  "+val.Render(bl))
+		rendered := renderMarkdown(detail.Body, bodyWidth)
+		for _, bl := range strings.Split(rendered, "\n") {
+			lines = append(lines, "  "+bl)
 		}
 	}
 
-	// Latest comment
+	// Latest comment — rendered as markdown
 	if detail.LatestComment != nil && detail.LatestComment.Body != "" {
 		c := detail.LatestComment
 		lines = append(lines, "")
 		commentHeader := fmt.Sprintf("  ─── Comment by @%s (%s) ───",
 			c.User.Login, c.CreatedAt.Local().Format("Jan 02, 15:04"))
 		lines = append(lines, dim.Render(commentHeader))
-		commentLines := wordWrap(c.Body, bodyWidth)
-		for _, cl := range commentLines {
-			lines = append(lines, "  "+val.Render(cl))
+		rendered := renderMarkdown(c.Body, bodyWidth)
+		for _, cl := range strings.Split(rendered, "\n") {
+			lines = append(lines, "  "+cl)
 		}
 	}
 
