@@ -99,18 +99,36 @@ type App struct {
 	// New notification tracking (set on each refresh)
 	newNotificationIDs map[string]bool
 
+	// Configurable refresh interval (0 means use default)
+	refreshInterval time.Duration
+
 	// Header cache (rebuilt on resize)
 	headerCache string
 }
 
+// Option configures the App.
+type Option func(*App)
+
+// WithRefreshInterval sets a custom auto-refresh interval.
+// A zero value means use the default (60s).
+func WithRefreshInterval(d time.Duration) Option {
+	return func(a *App) {
+		a.refreshInterval = d
+	}
+}
+
 // NewApp creates an App wired to the given GitHub API client.
-func NewApp(client *github.Client) App {
-	return App{
+func NewApp(client *github.Client, opts ...Option) App {
+	a := App{
 		client:      client,
 		currentView: github.ViewUnread,
 		loading:     true,
 		detailCache: make(map[string]*github.ThreadDetail),
 	}
+	for _, opt := range opts {
+		opt(&a)
+	}
+	return a
 }
 
 // Init is called once when the program starts. It returns the initial Cmd(s)
@@ -122,8 +140,16 @@ func NewApp(client *github.Client) App {
 func (a App) Init() tea.Cmd {
 	return tea.Batch(
 		fetchNotificationsCmd(a.client, a.currentView),
-		refreshTickCmd(),
+		refreshTickCmd(a.getRefreshInterval()),
 	)
+}
+
+// getRefreshInterval returns the configured refresh interval, or the default.
+func (a App) getRefreshInterval() time.Duration {
+	if a.refreshInterval > 0 {
+		return a.refreshInterval
+	}
+	return defaultRefreshInterval
 }
 
 // Update is the heart of the Elm Architecture. It receives a message and
@@ -264,7 +290,7 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.loading = true
 		return a, tea.Batch(
 			fetchNotificationsCmd(a.client, a.currentView),
-			refreshTickCmd(),
+			refreshTickCmd(a.getRefreshInterval()),
 		)
 
 	case statusMsg:
@@ -430,6 +456,21 @@ func (a App) handlePreviewKey(key string) (tea.Model, tea.Cmd) {
 			a.previewScroll--
 		}
 		return a, nil
+	case "g":
+		// Double-tap 'g' to jump to top of preview
+		now := time.Now()
+		if a.lastKey == "g" && now.Sub(a.lastKeyTime) < 500*time.Millisecond {
+			a.previewScroll = 0
+			a.lastKey = ""
+			return a, nil
+		}
+		a.lastKey = "g"
+		a.lastKeyTime = now
+		return a, nil
+	case "G":
+		// Jump to bottom of preview (set scroll high — renderPreview clamps)
+		a.previewScroll = 9999
+		return a, nil
 	}
 	// Actions (r, m, u, enter, etc.) work from the preview pane too —
 	// delegate to the list key handler so you don't have to switch focus.
@@ -514,7 +555,12 @@ func (a App) handleListKey(key string) (tea.Model, tea.Cmd) {
 		if n := a.selectedNotification(); n != nil {
 			webURL := n.WebURL()
 			if webURL != "" {
-				return a, openBrowserCmd(webURL)
+				// Open in browser and mark as read simultaneously
+				cmds := []tea.Cmd{openBrowserCmd(webURL)}
+				if n.Unread {
+					cmds = append(cmds, markReadCmd(a.client, n.ID))
+				}
+				return a, tea.Batch(cmds...)
 			}
 		}
 	}
@@ -707,7 +753,7 @@ func (a App) renderPreview(height, width int) string {
 
 	lines = append(lines, dim.Render("  Type:    ")+val.Render(n.Subject.Type))
 	lines = append(lines, dim.Render("  Repo:    ")+lipgloss.NewStyle().Foreground(theme.RepoColor).Render(n.Repository.FullName))
-	lines = append(lines, dim.Render("  Reason:  ")+lipgloss.NewStyle().Foreground(theme.ReasonColor).Render(n.ReasonLabel()))
+	lines = append(lines, dim.Render("  Reason:  ")+lipgloss.NewStyle().Foreground(theme.ReasonColorFor(n.Reason)).Render(n.ReasonLabel()))
 	lines = append(lines, dim.Render("  Updated: ")+val.Render(n.UpdatedAt.Local().Format("Jan 02, 15:04")))
 
 	status := "Read"
@@ -935,7 +981,7 @@ func (a App) renderNotificationRowSized(n github.Notification, selected bool, wi
 	}
 
 	// Non-selected rows use per-column colors
-	reasonStyle := lipgloss.NewStyle().Foreground(theme.ReasonColor).Width(reasonW).MaxWidth(reasonW)
+	reasonStyle := lipgloss.NewStyle().Foreground(theme.ReasonColorFor(n.Reason)).Width(reasonW).MaxWidth(reasonW)
 	repoStyle := lipgloss.NewStyle().Foreground(theme.RepoColor).Width(repoW).MaxWidth(repoW)
 	titleStyle := lipgloss.NewStyle().Foreground(theme.ColorText).Width(titleWidth).MaxWidth(titleWidth)
 	agoStyle := lipgloss.NewStyle().Foreground(theme.TimeColor).Width(agoW).MaxWidth(agoW).Align(lipgloss.Right)
@@ -967,6 +1013,7 @@ func (a App) renderNotificationRowSized(n github.Notification, selected bool, wi
 
 	return style.Render(row)
 }
+
 func (a App) renderNotificationList(notifications []github.Notification, height int) string {
 	a.clampScroll()
 	end := a.offset + height
@@ -1025,7 +1072,7 @@ func (a App) renderNotificationRow(n github.Notification, selected bool) string 
 		prefix = "•"
 	}
 
-	reasonStyle := lipgloss.NewStyle().Foreground(theme.ReasonColor).Width(reasonW).MaxWidth(reasonW)
+	reasonStyle := lipgloss.NewStyle().Foreground(theme.ReasonColorFor(n.Reason)).Width(reasonW).MaxWidth(reasonW)
 	repoStyle := lipgloss.NewStyle().Foreground(theme.RepoColor).Width(repoW).MaxWidth(repoW)
 	titleStyle := lipgloss.NewStyle().Foreground(theme.ColorText).Width(titleWidth).MaxWidth(titleWidth)
 	agoStyle := lipgloss.NewStyle().Foreground(theme.TimeColor).Width(agoW).MaxWidth(agoW).Align(lipgloss.Right)
@@ -1066,6 +1113,23 @@ func (a App) renderStatusBar() string {
 			color = theme.StatusError
 		}
 		left = lipgloss.NewStyle().Foreground(color).Render(a.statusText)
+	}
+
+	// Notification count: filtered/total (or just total if no filters)
+	filtered := len(a.filteredNotifications())
+	total := len(a.notifications)
+	var countStr string
+	if a.hasActiveFilters() {
+		countStr = fmt.Sprintf(" %d/%d", filtered, total)
+	} else {
+		countStr = fmt.Sprintf(" %d", total)
+	}
+	countStyled := lipgloss.NewStyle().Foreground(theme.ColorLavender).Bold(true).Render(countStr)
+
+	if left != "" {
+		left = left + "  " + countStyled
+	} else {
+		left = countStyled
 	}
 
 	right := "q:quit  ?:help  r:read  m:mute  /:repo  s:search  t:type  p:part  a:age"

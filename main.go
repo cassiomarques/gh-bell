@@ -5,6 +5,8 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strconv"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/cassiomarques/gh-bell/internal/github"
@@ -49,7 +51,18 @@ func main() {
 	}
 	log.Println("client created successfully")
 
-	app := tui.NewApp(client)
+	// Parse optional refresh interval from GH_BELL_REFRESH (seconds)
+	var refreshInterval time.Duration
+	if s := os.Getenv("GH_BELL_REFRESH"); s != "" {
+		if secs, err := strconv.Atoi(s); err == nil && secs > 0 {
+			refreshInterval = time.Duration(secs) * time.Second
+			log.Printf("refresh interval set to %s (from GH_BELL_REFRESH)", refreshInterval)
+		} else {
+			log.Printf("ignoring invalid GH_BELL_REFRESH=%q, using default", s)
+		}
+	}
+
+	app := tui.NewApp(client, tui.WithRefreshInterval(refreshInterval))
 	p := tea.NewProgram(app)
 
 	log.Println("starting TUI")

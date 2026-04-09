@@ -141,8 +141,8 @@ func unsubscribeCmd(client *github.Client, threadID string) tea.Cmd {
 }
 
 // refreshTickCmd returns a Cmd that sends a refreshTickMsg after an interval.
-func refreshTickCmd() tea.Cmd {
-	return tea.Tick(defaultRefreshInterval, func(time.Time) tea.Msg {
+func refreshTickCmd(interval time.Duration) tea.Cmd {
+	return tea.Tick(interval, func(time.Time) tea.Msg {
 		return refreshTickMsg{}
 	})
 }

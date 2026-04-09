@@ -1,6 +1,10 @@
 package theme
 
-import "charm.land/lipgloss/v2"
+import (
+	"image/color"
+
+	"charm.land/lipgloss/v2"
+)
 
 // Catppuccin Mocha palette — same family as memoria's theme.
 var (
@@ -46,3 +50,30 @@ var (
 	RepoColor   = ColorBlue
 	TimeColor   = ColorOverlay1
 )
+
+// ReasonColorFor returns a distinct color for each notification reason,
+// making it easy to visually distinguish why you received a notification.
+func ReasonColorFor(reason string) color.Color {
+	switch reason {
+	case "review_requested":
+		return ColorMauve
+	case "mention", "team_mention":
+		return ColorYellow
+	case "assign":
+		return ColorGreen
+	case "author":
+		return ColorBlue
+	case "comment":
+		return ColorTeal
+	case "ci_activity":
+		return ColorPeach
+	case "security_alert":
+		return ColorRed
+	case "state_change":
+		return ColorSky
+	case "approval_requested":
+		return ColorPink
+	default:
+		return ColorOverlay1 // subscribed, manual, etc.
+	}
+}

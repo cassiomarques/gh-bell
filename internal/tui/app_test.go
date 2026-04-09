@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/cassiomarques/gh-bell/internal/github"
+	"github.com/cassiomarques/gh-bell/internal/tui/theme"
 )
 
 func sampleNotifications() []github.Notification {
@@ -1155,4 +1156,107 @@ t.Error("'j' in preview pane should scroll preview, not navigate list")
 }
 
 _ = initialCount
+}
+
+func TestStatusBar_ShowsTotalCount(t *testing.T) {
+	a := newTestApp()
+	bar := a.renderStatusBar()
+	// Should show total count (4 notifications, no filters active)
+	if !strings.Contains(bar, "4") {
+		t.Errorf("status bar should show total count of 4, got: %q", bar)
+	}
+}
+
+func TestStatusBar_ShowsFilteredCount(t *testing.T) {
+	a := newTestApp()
+	a.repoFilter = "org/app"
+	bar := a.renderStatusBar()
+	// With filter active, should show filtered/total format
+	if !strings.Contains(bar, "1/4") {
+		t.Errorf("status bar should show 1/4 when filtered, got: %q", bar)
+	}
+}
+
+func TestWithRefreshInterval(t *testing.T) {
+	a := App{}
+	opt := WithRefreshInterval(30 * time.Second)
+	opt(&a)
+	if a.refreshInterval != 30*time.Second {
+		t.Errorf("refreshInterval = %v, want 30s", a.refreshInterval)
+	}
+	if got := a.getRefreshInterval(); got != 30*time.Second {
+		t.Errorf("getRefreshInterval() = %v, want 30s", got)
+	}
+}
+
+func TestGetRefreshInterval_Default(t *testing.T) {
+	a := App{} // zero value — no custom interval
+	got := a.getRefreshInterval()
+	if got != 60*time.Second {
+		t.Errorf("getRefreshInterval() = %v, want default 60s", got)
+	}
+}
+
+func TestMarkReadOnOpen(t *testing.T) {
+	a := newTestApp()
+	// First notification is unread — pressing enter should produce a batch cmd
+	_, cmd := a.handleListKey("enter")
+	if cmd == nil {
+		t.Fatal("pressing enter on unread notification should return a command")
+	}
+	// The cmd should be a batch (openBrowser + markRead)
+	// We can't easily inspect tea.Batch internals, but we can verify it's non-nil
+	// and that a read notification does NOT produce markRead
+	a2 := newTestApp()
+	a2.cursor = 2 // item 3 is unread=false
+	_, cmd2 := a2.handleListKey("enter")
+	if cmd2 == nil {
+		t.Fatal("pressing enter on read notification should still open browser")
+	}
+}
+
+func TestPreviewPane_GG_JumpsToTop(t *testing.T) {
+	a := newTestApp()
+	a.focused = focusPreview
+	a.previewScroll = 10
+
+	// First 'g' — just records the key
+	result, _ := a.handlePreviewKey("g")
+	a = result.(App)
+	if a.previewScroll != 10 {
+		t.Error("first 'g' should not change scroll")
+	}
+
+	// Second 'g' quickly — should jump to top
+	result, _ = a.handlePreviewKey("g")
+	a = result.(App)
+	if a.previewScroll != 0 {
+		t.Errorf("gg should jump to top, got scroll=%d", a.previewScroll)
+	}
+}
+
+func TestPreviewPane_G_JumpsToBottom(t *testing.T) {
+	a := newTestApp()
+	a.focused = focusPreview
+	a.previewScroll = 0
+
+	result, _ := a.handlePreviewKey("G")
+	a = result.(App)
+	if a.previewScroll == 0 {
+		t.Error("G should set scroll to a large value for jump-to-bottom")
+	}
+}
+
+func TestReasonColorFor(t *testing.T) {
+	// Verify distinct colors for key reasons
+	reasons := []string{"review_requested", "mention", "assign", "author", "comment", "ci_activity", "security_alert"}
+	colors := make(map[string]bool)
+	for _, r := range reasons {
+		c := theme.ReasonColorFor(r)
+		key := fmt.Sprintf("%v", c)
+		if colors[key] {
+			t.Errorf("reason %q shares a color with another reason", r)
+		}
+		colors[key] = true
+	}
 }
