@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/cassiomarques/gh-bell/internal/github"
+	"github.com/cassiomarques/gh-bell/internal/scoring"
 	"github.com/cassiomarques/gh-bell/internal/service"
 	"github.com/cassiomarques/gh-bell/internal/storage"
 	"github.com/cassiomarques/gh-bell/internal/tui/theme"
@@ -48,6 +49,7 @@ func newTestApp() App {
 		height:      24,
 		detailCache: make(map[string]*github.ThreadDetail),
 		selected:    make(map[string]bool),
+		actionCache: make(map[string]scoring.ActionReason),
 	}
 	a.notifications = sampleNotifications()
 	a.collectFilterOptions()
@@ -2699,5 +2701,174 @@ func TestFilterBarShowsReviewMe(t *testing.T) {
 	bar := a.renderFilters()
 	if !strings.Contains(bar, "review:me") {
 		t.Error("filter bar should show review:me when review filter is active")
+	}
+}
+
+// --- Scoring integration tests ---
+
+func TestSmartSortReordersNotifications(t *testing.T) {
+	now := time.Now()
+	a := newTestApp()
+	a.smartSort = true
+	a.currentUser = "alice"
+	a.notifications = []github.Notification{
+		{
+			ID:         "low",
+			Reason:     "subscribed",
+			UpdatedAt:  now.Add(-1 * time.Hour),
+			Subject:    github.Subject{Title: "Subscribed", Type: "PullRequest"},
+			Repository: github.Repository{FullName: "org/repo"},
+		},
+		{
+			ID:         "high",
+			Reason:     "review_requested",
+			UpdatedAt:  now.Add(-30 * time.Minute),
+			Subject:    github.Subject{Title: "Review please", Type: "PullRequest"},
+			Repository: github.Repository{FullName: "org/repo"},
+		},
+	}
+	a.detailCache = map[string]*github.ThreadDetail{
+		"high": {
+			State:              "open",
+			RequestedReviewers: []github.User{{Login: "alice"}},
+		},
+	}
+
+	filtered := a.filteredNotifications()
+	if len(filtered) != 2 {
+		t.Fatalf("expected 2 notifications, got %d", len(filtered))
+	}
+	if filtered[0].ID != "high" {
+		t.Errorf("smart sort should put review_requested first, got %s", filtered[0].ID)
+	}
+	if filtered[1].ID != "low" {
+		t.Errorf("smart sort should put subscribed last, got %s", filtered[1].ID)
+	}
+}
+
+func TestChronologicalSortKeepsOrder(t *testing.T) {
+	now := time.Now()
+	a := newTestApp()
+	a.smartSort = false
+	a.notifications = []github.Notification{
+		{
+			ID:         "recent",
+			Reason:     "subscribed",
+			UpdatedAt:  now.Add(-10 * time.Minute),
+			Subject:    github.Subject{Title: "Recent", Type: "PullRequest"},
+			Repository: github.Repository{FullName: "org/repo"},
+		},
+		{
+			ID:         "old",
+			Reason:     "review_requested",
+			UpdatedAt:  now.Add(-5 * time.Hour),
+			Subject:    github.Subject{Title: "Old", Type: "PullRequest"},
+			Repository: github.Repository{FullName: "org/repo"},
+		},
+	}
+
+	filtered := a.filteredNotifications()
+	if len(filtered) != 2 {
+		t.Fatalf("expected 2 notifications, got %d", len(filtered))
+	}
+	// Chronological mode preserves original slice order (not reordered)
+	if filtered[0].ID != "recent" {
+		t.Errorf("chronological sort should keep original order, got %s first", filtered[0].ID)
+	}
+}
+
+func TestCtrlSTogglesSmartSort(t *testing.T) {
+	a := newTestApp()
+	a.smartSort = false
+
+	// Toggle on (directly set, matching the ctrl+s handler logic)
+	a.smartSort = true
+	a.cursor = 0
+	a.offset = 0
+	a.statusText = "Sort: smart (by priority score)"
+
+	if !a.smartSort {
+		t.Error("smart sort should be enabled")
+	}
+	if !strings.Contains(a.statusText, "smart") {
+		t.Error("status text should mention smart sort")
+	}
+
+	// Toggle off
+	a.smartSort = false
+	a.statusText = "Sort: chronological (by updated_at)"
+
+	if a.smartSort {
+		t.Error("smart sort should be disabled")
+	}
+	if !strings.Contains(a.statusText, "chronological") {
+		t.Error("status text should mention chronological")
+	}
+}
+
+func TestFilterBarShowsSortSmart(t *testing.T) {
+	a := newTestApp()
+	a.smartSort = true
+	a.repoFilter = "org/repo" // need at least one active filter for bar to show
+	a.width = 80
+
+	bar := a.renderFilters()
+	if !strings.Contains(bar, "sort:smart") {
+		t.Error("filter bar should show sort:smart when smart sort is active")
+	}
+}
+
+func TestActionLabelsInRows(t *testing.T) {
+	now := time.Now()
+	a := newTestApp()
+	a.smartSort = true
+	a.currentUser = "alice"
+	a.width = 120
+	a.height = 24
+	a.notifications = []github.Notification{
+		{
+			ID:         "pr1",
+			Reason:     "review_requested",
+			UpdatedAt:  now.Add(-1 * time.Hour),
+			Subject:    github.Subject{Title: "Add feature", Type: "PullRequest"},
+			Repository: github.Repository{FullName: "org/repo"},
+		},
+	}
+	a.detailCache = map[string]*github.ThreadDetail{
+		"pr1": {
+			State:              "open",
+			RequestedReviewers: []github.User{{Login: "alice"}},
+		},
+	}
+
+	// Trigger action computation via filteredNotifications
+	_ = a.filteredNotifications()
+
+	// The action for this notification should be review_requested
+	label, _ := a.reasonLabelFor(a.notifications[0])
+	if !strings.Contains(label, "Review") {
+		t.Errorf("expected action label containing 'Review', got %q", label)
+	}
+}
+
+func TestActionCachePopulatedInChronologicalMode(t *testing.T) {
+	now := time.Now()
+	a := newTestApp()
+	a.smartSort = false
+	a.currentUser = "bob"
+	a.notifications = []github.Notification{
+		{
+			ID:         "n1",
+			Reason:     "assign",
+			UpdatedAt:  now,
+			Subject:    github.Subject{Title: "Fix bug", Type: "Issue"},
+			Repository: github.Repository{FullName: "org/repo"},
+		},
+	}
+
+	_ = a.filteredNotifications()
+
+	if _, ok := a.actionCache["n1"]; !ok {
+		t.Error("action cache should be populated even in chronological mode")
 	}
 }

@@ -77,3 +77,30 @@ func ReasonColorFor(reason string) color.Color {
 		return ColorOverlay1 // subscribed, manual, etc.
 	}
 }
+
+// ActionColorFor returns a color for scored action reasons.
+// Red = urgent, Yellow = needs attention, Green = positive, Dim = informational.
+func ActionColorFor(action string) color.Color {
+	switch action {
+	case "security_alert", "merge_conflicts", "ci_failed":
+		return ColorRed
+	case "changes_requested":
+		return ColorMaroon
+	case "review_requested", "re_review_requested", "assigned":
+		return ColorYellow
+	case "ci_pending", "waiting_for_review":
+		return ColorPeach
+	case "mentioned":
+		return ColorSky
+	case "ready_to_merge", "approved":
+		return ColorGreen
+	case "draft":
+		return ColorOverlay1
+	case "merged":
+		return ColorMauve
+	case "closed":
+		return ColorOverlay1
+	default:
+		return ColorOverlay1
+	}
+}

@@ -31,6 +31,10 @@ token: ""
 # When enabled, notifications are visually grouped under repository headers
 # instead of a flat chronological list. Groups are sorted by most recent item.
 # group_by_repo: false
+
+# Sort mode: "smart" (priority score) or "chronological" (updated_at).
+# Smart mode surfaces actionable items first using exponential time decay.
+# sort_mode: smart
 `
 
 // Config holds all gh-bell configuration.
@@ -39,6 +43,7 @@ type Config struct {
 	RefreshInterval int    `yaml:"refresh_interval,omitempty"`
 	CleanupDays     int    `yaml:"cleanup_days,omitempty"`
 	GroupByRepo     bool   `yaml:"group_by_repo,omitempty"`
+	SortMode        string `yaml:"sort_mode,omitempty"` // "smart" or "chronological"
 }
 
 // Dir returns the gh-bell data/config directory (~/.gh-bell/).
@@ -123,6 +128,9 @@ func applyEnvOverrides(cfg *Config) {
 	}
 	if s := os.Getenv("GH_BELL_GROUP_BY_REPO"); s != "" {
 		cfg.GroupByRepo = s == "1" || s == "true"
+	}
+	if s := os.Getenv("GH_BELL_SORT_MODE"); s != "" {
+		cfg.SortMode = s
 	}
 }
 

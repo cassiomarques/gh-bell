@@ -131,6 +131,14 @@ func main() {
 		log.Printf("group-by-repo enabled")
 	}
 
+	// Pass sort mode config (default is smart)
+	if cfg.SortMode == "chronological" {
+		opts = append(opts, tui.WithSmartSort(false))
+		log.Printf("sort mode: chronological")
+	} else {
+		log.Printf("sort mode: smart")
+	}
+
 	app := tui.NewApp(client, opts...)
 	p := tea.NewProgram(app)
 

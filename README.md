@@ -53,9 +53,14 @@ cleanup_days: 15
 # When enabled, notifications are visually grouped under repository headers
 # instead of a flat chronological list. Groups are sorted by most recent item.
 # group_by_repo: false
+
+# Sort mode: "smart" (priority score) or "chronological" (updated_at).
+# Smart sort ranks notifications by actionability — items needing your attention
+# float to the top, while informational items sink.
+# sort_mode: smart
 ```
 
-Environment variables `GH_BELL_TOKEN`, `GH_BELL_REFRESH`, `GH_BELL_CLEANUP_DAYS`, and `GH_BELL_GROUP_BY_REPO` still work and **override** the config file (useful for CI or one-off runs).
+Environment variables `GH_BELL_TOKEN`, `GH_BELL_REFRESH`, `GH_BELL_CLEANUP_DAYS`, `GH_BELL_GROUP_BY_REPO`, and `GH_BELL_SORT_MODE` still work and **override** the config file (useful for CI or one-off runs).
 
 ## Features
 
@@ -79,6 +84,9 @@ Environment variables `GH_BELL_TOKEN`, `GH_BELL_REFRESH`, `GH_BELL_CLEANUP_DAYS`
 - **Notification count** — status bar shows filtered/total count
 - **Catppuccin Mocha theme** — beautiful terminal colors out of the box
 - **Group by repository** — optional mode (`group_by_repo: true` in config) that groups notifications under repo headers, sorted by most recent activity. Off by default to preserve flat chronological ordering
+- **Smart sort** — priority scoring engine that ranks notifications by actionability. Review requests, CI failures, and items needing your attention float to the top; informational items (merged, closed) sink. Toggle at runtime with `Ctrl+S` or set `sort_mode: smart` in config (enabled by default)
+- **Action labels** — when smart sort is active, the reason column shows computed action labels (e.g., "Review req.", "CI failed", "Approved") with color coding: red for urgent, yellow for attention needed, green for positive, dim for informational
+- **Review-requested filter** — `V` filters to notifications where your review was explicitly requested
 
 ## Keybindings
 
@@ -135,6 +143,7 @@ Search covers titles, issue/PR bodies, comments, labels, repo names, and notific
 | `x` | Cycle state filter (open, closed, merged, draft)¹ |
 | `p` | Toggle participating-only |
 | `A` | Toggle assigned to me |
+| `V` | Toggle review-requested filter |
 | `Esc` | Clear all filters |
 
 > ¹ The state filter only matches notifications whose detail has already been loaded (by scrolling past them in the list). Notifications with unknown state are hidden when this filter is active.
@@ -146,6 +155,7 @@ Search covers titles, issue/PR bodies, comments, labels, repo names, and notific
 | `Ctrl+R` | Refresh notifications |
 | `Ctrl+F` | Force full resync (re-fetches all pages) |
 | `Ctrl+L` | Toggle log pane |
+| `Ctrl+S` | Toggle smart/chronological sort |
 | `?` | Toggle help overlay |
 | `q` | Quit |
 

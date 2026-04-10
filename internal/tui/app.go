@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"image/color"
 	"log"
 	"sort"
 	"strconv"
@@ -11,6 +12,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/cassiomarques/gh-bell/internal/github"
+	"github.com/cassiomarques/gh-bell/internal/scoring"
 	"github.com/cassiomarques/gh-bell/internal/service"
 	"github.com/cassiomarques/gh-bell/internal/tui/theme"
 )
@@ -132,6 +134,10 @@ type App struct {
 	// Grouping
 	groupByRepo bool // group notifications by repository
 
+	// Scoring / sort mode
+	smartSort   bool                          // true = sort by score, false = chronological
+	actionCache map[string]scoring.ActionReason // notification ID → computed action
+
 	// Header cache (rebuilt on resize)
 	headerCache string
 }
@@ -175,6 +181,13 @@ func WithGroupByRepo(enabled bool) Option {
 	}
 }
 
+// WithSmartSort enables priority-based sorting instead of chronological.
+func WithSmartSort(enabled bool) Option {
+	return func(a *App) {
+		a.smartSort = enabled
+	}
+}
+
 // NewApp creates an App wired to the given GitHub API client.
 func NewApp(client github.NotificationAPI, opts ...Option) App {
 	a := App{
@@ -183,6 +196,8 @@ func NewApp(client github.NotificationAPI, opts ...Option) App {
 		loading:     true,
 		detailCache: make(map[string]*github.ThreadDetail),
 		selected:    make(map[string]bool),
+		actionCache: make(map[string]scoring.ActionReason),
+		smartSort:   true, // default to smart sort
 	}
 	for _, opt := range opts {
 		opt(&a)
@@ -537,6 +552,16 @@ func (a App) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			if a.focused == focusLog {
 				a.focused = focusList
 			}
+		}
+		return a, nil
+	case "ctrl+s":
+		a.smartSort = !a.smartSort
+		a.cursor = 0
+		a.offset = 0
+		if a.smartSort {
+			a.statusText = "Sort: smart (by priority score)"
+		} else {
+			a.statusText = "Sort: chronological (by updated_at)"
 		}
 		return a, nil
 	case "/":
@@ -1077,6 +1102,9 @@ func (a App) renderFilters() string {
 	if a.reviewFilter {
 		parts = append(parts, "review:me")
 	}
+	if a.smartSort {
+		parts = append(parts, "sort:smart")
+	}
 	label := strings.Join(parts, "  ")
 	hint := lipgloss.NewStyle().Foreground(theme.Dimmed).Render("  (Esc to clear)")
 	return lipgloss.NewStyle().
@@ -1126,7 +1154,8 @@ func (a App) previewContentLines(width int) []string {
 
 	lines = append(lines, dim.Render("  Type:    ")+val.Render(n.Subject.Type))
 	lines = append(lines, dim.Render("  Repo:    ")+lipgloss.NewStyle().Foreground(theme.RepoColor).Render(n.Repository.FullName))
-	lines = append(lines, dim.Render("  Reason:  ")+lipgloss.NewStyle().Foreground(theme.ReasonColorFor(n.Reason)).Render(n.ReasonLabel()))
+	reasonText, reasonColor := a.reasonLabelFor(*n)
+	lines = append(lines, dim.Render("  Reason:  ")+lipgloss.NewStyle().Foreground(reasonColor).Render(reasonText))
 	lines = append(lines, dim.Render("  Updated: ")+val.Render(n.UpdatedAt.Local().Format("Jan 02, 15:04")))
 
 	status := "Read"
@@ -1386,9 +1415,20 @@ func (a App) renderNotificationListSized(notifications []github.Notification, he
 	return strings.Join(rows, "\n")
 }
 
+// reasonLabelFor returns the display label and color for the reason/action column.
+// When smart sort is active and an action is cached, use the action label + color.
+// Otherwise fall back to the notification reason.
+func (a App) reasonLabelFor(n github.Notification) (string, color.Color) {
+	if action, ok := a.actionCache[n.ID]; ok && action != "" {
+		return action.Label(), theme.ActionColorFor(string(action))
+	}
+	return n.ReasonLabel(), theme.ReasonColorFor(n.Reason)
+}
+
 func (a App) renderNotificationRowSized(n github.Notification, isCursor bool, width int) string {
 	icon := n.Icon()
-	reason := truncate(n.ReasonLabel(), 10)
+	reasonText, _ := a.reasonLabelFor(n)
+	reason := truncate(reasonText, 10)
 	repo := truncate(n.Repository.FullName, 24)
 	ago := timeAgo(n.UpdatedAt)
 	isNew := a.newNotificationIDs[n.ID]
@@ -1434,7 +1474,8 @@ func (a App) renderNotificationRowSized(n github.Notification, isCursor bool, wi
 	}
 
 	// Non-selected rows use per-column colors
-	reasonStyle := lipgloss.NewStyle().Foreground(theme.ReasonColorFor(n.Reason)).Width(reasonW).MaxWidth(reasonW)
+	_, reasonColor := a.reasonLabelFor(n)
+	reasonStyle := lipgloss.NewStyle().Foreground(reasonColor).Width(reasonW).MaxWidth(reasonW)
 	repoStyle := lipgloss.NewStyle().Foreground(theme.RepoColor).Width(repoW).MaxWidth(repoW)
 	titleStyle := lipgloss.NewStyle().Foreground(theme.ColorText).Width(titleWidth).MaxWidth(titleWidth)
 	agoStyle := lipgloss.NewStyle().Foreground(theme.TimeColor).Width(agoW).MaxWidth(agoW).Align(lipgloss.Right)
@@ -1498,7 +1539,8 @@ func (a App) renderNotificationList(notifications []github.Notification, height 
 
 func (a App) renderNotificationRow(n github.Notification, isCursor bool) string {
 	icon := n.Icon()
-	reason := truncate(n.ReasonLabel(), 10)
+	reasonText, _ := a.reasonLabelFor(n)
+	reason := truncate(reasonText, 10)
 	repo := truncate(n.Repository.FullName, 28)
 	ago := timeAgo(n.UpdatedAt)
 	isNew := a.newNotificationIDs[n.ID]
@@ -1540,7 +1582,8 @@ func (a App) renderNotificationRow(n github.Notification, isCursor bool) string 
 		prefix = "•"
 	}
 
-	reasonStyle := lipgloss.NewStyle().Foreground(theme.ReasonColorFor(n.Reason)).Width(reasonW).MaxWidth(reasonW)
+	_, reasonColor := a.reasonLabelFor(n)
+	reasonStyle := lipgloss.NewStyle().Foreground(reasonColor).Width(reasonW).MaxWidth(reasonW)
 	repoStyle := lipgloss.NewStyle().Foreground(theme.RepoColor).Width(repoW).MaxWidth(repoW)
 	titleStyle := lipgloss.NewStyle().Foreground(theme.ColorText).Width(titleWidth).MaxWidth(titleWidth)
 	agoStyle := lipgloss.NewStyle().Foreground(theme.TimeColor).Width(agoW).MaxWidth(agoW).Align(lipgloss.Right)
@@ -1794,6 +1837,37 @@ func (a App) filteredNotifications() []github.Notification {
 				}
 			}
 			result = append(result, n)
+		}
+	}
+
+	// Smart sort: sort by priority score (highest first).
+	// Runs after filtering, before group-by-repo so groups contain
+	// correctly ordered items.
+	if a.smartSort {
+		now := time.Now()
+		scored := scoring.ScoreAll(result, a.detailCache, a.currentUser, now)
+		sort.SliceStable(scored, func(i, j int) bool {
+			diff := scored[i].Score - scored[j].Score
+			if diff > 0.01 {
+				return true
+			}
+			if diff < -0.01 {
+				return false
+			}
+			return scored[i].Notification.UpdatedAt.After(scored[j].Notification.UpdatedAt)
+		})
+		result = result[:0]
+		for _, s := range scored {
+			a.actionCache[s.Notification.ID] = s.Action
+			result = append(result, s.Notification)
+		}
+	} else {
+		// Chronological mode — still compute actions for labels but don't sort
+		now := time.Now()
+		for _, n := range result {
+			detail := a.detailCache[n.ID]
+			a.actionCache[n.ID] = scoring.ComputeAction(n, detail, a.currentUser)
+			_ = scoring.ComputeScore(a.actionCache[n.ID], n.UpdatedAt, now)
 		}
 	}
 
@@ -2173,7 +2247,7 @@ func (a *App) clampScroll() {
 func (a App) hasActiveFilters() bool {
 	return a.repoFilter != "" || a.reasonFilter != "" || a.typeFilter != "" ||
 		a.orgFilter != "" || a.stateFilter != "" || a.ageFilter != 0 || a.titleSearch != "" ||
-		a.participating || a.assignedFilter || a.reviewFilter || len(a.searchResultIDs) > 0
+		a.participating || a.assignedFilter || a.reviewFilter || a.smartSort || len(a.searchResultIDs) > 0
 }
 
 func (a App) contentHeight() int {
@@ -2337,6 +2411,8 @@ func (a App) renderHelpOverlay() string {
 	b.WriteString(line("Ctrl+R", "Refresh notifications"))
 	b.WriteByte('\n')
 	b.WriteString(line("Ctrl+F", "Force full resync"))
+	b.WriteByte('\n')
+	b.WriteString(line("Ctrl+S", "Toggle smart/chrono sort"))
 	b.WriteByte('\n')
 	b.WriteString(line("Ctrl+L", "Toggle log pane"))
 	b.WriteByte('\n')
