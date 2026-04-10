@@ -2270,7 +2270,7 @@ func (a App) renderHelpOverlay() string {
 	b.WriteByte('\n')
 	b.WriteString(line("a", "Cycle age filter"))
 	b.WriteByte('\n')
-	b.WriteString(line("x", "Cycle state filter (open/closed/merged/draft)"))
+	b.WriteString(line("x", "Cycle state filter"))
 	b.WriteByte('\n')
 	b.WriteString(line("p", "Toggle participating"))
 	b.WriteByte('\n')
@@ -2300,7 +2300,7 @@ func (a App) renderHelpOverlay() string {
 		Padding(0, 1).
 		Render("gh-bell  Keybindings")
 
-	boxWidth := 48
+	boxWidth := 56
 	if boxWidth > a.width-4 {
 		boxWidth = a.width - 4
 	}
