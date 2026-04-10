@@ -1253,6 +1253,23 @@ func (a App) renderEnrichedDetail(lines []string, detail *github.ThreadDetail, s
 		lines = append(lines, dim.Render("  Changes: ")+val.Render(stats))
 	}
 
+	// Requested reviewers (PR-specific)
+	if len(detail.RequestedReviewers) > 0 || len(detail.RequestedTeams) > 0 {
+		var parts []string
+		for _, u := range detail.RequestedReviewers {
+			parts = append(parts, "@"+u.Login)
+		}
+		for _, t := range detail.RequestedTeams {
+			parts = append(parts, "@"+t.Slug)
+		}
+		lines = append(lines, dim.Render("  Review:  ")+lipgloss.NewStyle().Foreground(theme.ColorPeach).Render(strings.Join(parts, ", ")))
+	}
+
+	// Milestone
+	if detail.Milestone != nil && detail.Milestone.Title != "" {
+		lines = append(lines, dim.Render("  Mile:    ")+val.Render(detail.Milestone.Title))
+	}
+
 	// Release tag
 	if subjectType == "Release" && detail.TagName != "" {
 		lines = append(lines, dim.Render("  Tag:     ")+val.Render(detail.TagName))

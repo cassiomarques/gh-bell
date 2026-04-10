@@ -2550,3 +2550,65 @@ func TestMultiSelect_SurvivesScroll(t *testing.T) {
 		t.Errorf("expected 2 selected notifications, got %d", len(sel))
 	}
 }
+
+func TestPreviewShowsRequestedReviewers(t *testing.T) {
+	a := newTestApp()
+	a.detailCache = make(map[string]*github.ThreadDetail)
+	a.detailCache["1"] = &github.ThreadDetail{
+		State: "open",
+		User:  github.User{Login: "author"},
+		RequestedReviewers: []github.User{
+			{Login: "bob"},
+			{Login: "carol"},
+		},
+		RequestedTeams: []github.Team{
+			{Name: "Frontend", Slug: "frontend"},
+		},
+	}
+
+	preview := a.renderPreview(30, 60)
+
+	if !strings.Contains(preview, "@bob") {
+		t.Error("preview should show requested reviewer @bob")
+	}
+	if !strings.Contains(preview, "@carol") {
+		t.Error("preview should show requested reviewer @carol")
+	}
+	if !strings.Contains(preview, "@frontend") {
+		t.Error("preview should show requested team @frontend")
+	}
+}
+
+func TestPreviewShowsMilestone(t *testing.T) {
+	a := newTestApp()
+	a.detailCache = make(map[string]*github.ThreadDetail)
+	a.detailCache["1"] = &github.ThreadDetail{
+		State:     "open",
+		User:      github.User{Login: "author"},
+		Milestone: &github.Milestone{Title: "v2.0-beta"},
+	}
+
+	preview := a.renderPreview(30, 60)
+
+	if !strings.Contains(preview, "v2.0-beta") {
+		t.Error("preview should show milestone title")
+	}
+}
+
+func TestPreviewHidesEmptyReviewersAndMilestone(t *testing.T) {
+	a := newTestApp()
+	a.detailCache = make(map[string]*github.ThreadDetail)
+	a.detailCache["1"] = &github.ThreadDetail{
+		State: "open",
+		User:  github.User{Login: "author"},
+	}
+
+	preview := a.renderPreview(30, 60)
+
+	if strings.Contains(preview, "Review:") {
+		t.Error("preview should not show Review line when no reviewers")
+	}
+	if strings.Contains(preview, "Mile:") {
+		t.Error("preview should not show Mile line when no milestone")
+	}
+}

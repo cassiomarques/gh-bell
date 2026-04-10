@@ -113,7 +113,22 @@ func (s *Store) migrate() error {
 			value TEXT
 		);
 	`)
-	return err
+	if err != nil {
+		return err
+	}
+
+	// Add columns introduced after initial schema. SQLite ignores
+	// "duplicate column name" errors, so we attempt each and tolerate failure.
+	newCols := []string{
+		"ALTER TABLE thread_details ADD COLUMN html_url TEXT DEFAULT ''",
+		"ALTER TABLE thread_details ADD COLUMN requested_reviewers_json TEXT DEFAULT ''",
+		"ALTER TABLE thread_details ADD COLUMN requested_teams_json TEXT DEFAULT ''",
+		"ALTER TABLE thread_details ADD COLUMN milestone TEXT DEFAULT ''",
+	}
+	for _, ddl := range newCols {
+		s.db.Exec(ddl) // ignore "duplicate column" errors
+	}
+	return nil
 }
 
 // --- Notifications ---
@@ -333,6 +348,21 @@ func (s *Store) UpsertDetail(threadID string, d *github.ThreadDetail) error {
 		return fmt.Errorf("marshal labels: %w", err)
 	}
 
+	reviewersJSON, err := json.Marshal(d.RequestedReviewers)
+	if err != nil {
+		return fmt.Errorf("marshal requested_reviewers: %w", err)
+	}
+
+	teamsJSON, err := json.Marshal(d.RequestedTeams)
+	if err != nil {
+		return fmt.Errorf("marshal requested_teams: %w", err)
+	}
+
+	var milestone string
+	if d.Milestone != nil {
+		milestone = d.Milestone.Title
+	}
+
 	var mergedBy sql.NullString
 	if d.MergedBy != nil {
 		mergedBy = sql.NullString{String: d.MergedBy.Login, Valid: true}
@@ -350,8 +380,9 @@ func (s *Store) UpsertDetail(threadID string, d *github.ThreadDetail) error {
 	_, err = s.db.Exec(`
 		INSERT INTO thread_details (thread_id, state, body, author, labels_json,
 			draft, merged, merged_by, additions, deletions, tag_name,
-			comment_body, comment_author, comment_at, fetched_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			comment_body, comment_author, comment_at, fetched_at,
+			html_url, requested_reviewers_json, requested_teams_json, milestone)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(thread_id) DO UPDATE SET
 			state = excluded.state,
 			body = excluded.body,
@@ -366,10 +397,15 @@ func (s *Store) UpsertDetail(threadID string, d *github.ThreadDetail) error {
 			comment_body = excluded.comment_body,
 			comment_author = excluded.comment_author,
 			comment_at = excluded.comment_at,
-			fetched_at = excluded.fetched_at`,
+			fetched_at = excluded.fetched_at,
+			html_url = excluded.html_url,
+			requested_reviewers_json = excluded.requested_reviewers_json,
+			requested_teams_json = excluded.requested_teams_json,
+			milestone = excluded.milestone`,
 		threadID, d.State, d.Body, d.User.Login, string(labelsJSON),
 		d.Draft, d.Merged, mergedBy, d.Additions, d.Deletions, d.TagName,
 		commentBody, commentAuthor, commentAt, now,
+		d.HTMLURL, string(reviewersJSON), string(teamsJSON), milestone,
 	)
 	return err
 }
@@ -378,6 +414,7 @@ func (s *Store) UpsertDetail(threadID string, d *github.ThreadDetail) error {
 func (s *Store) GetDetail(threadID string) (*github.ThreadDetail, time.Time, error) {
 	var d github.ThreadDetail
 	var labelsJSON string
+	var reviewersJSON, teamsJSON, milestone string
 	var mergedBy sql.NullString
 	var commentBody, commentAuthor sql.NullString
 	var commentAt sql.NullTime
@@ -386,13 +423,15 @@ func (s *Store) GetDetail(threadID string) (*github.ThreadDetail, time.Time, err
 	err := s.db.QueryRow(`
 		SELECT state, body, author, labels_json, draft, merged, merged_by,
 			additions, deletions, tag_name, comment_body, comment_author,
-			comment_at, fetched_at
+			comment_at, fetched_at,
+			html_url, requested_reviewers_json, requested_teams_json, milestone
 		FROM thread_details WHERE thread_id = ?`, threadID,
 	).Scan(
 		&d.State, &d.Body, &d.User.Login, &labelsJSON,
 		&d.Draft, &d.Merged, &mergedBy,
 		&d.Additions, &d.Deletions, &d.TagName,
 		&commentBody, &commentAuthor, &commentAt, &fetchedAt,
+		&d.HTMLURL, &reviewersJSON, &teamsJSON, &milestone,
 	)
 	if err == sql.ErrNoRows {
 		return nil, time.Time{}, nil
@@ -405,6 +444,22 @@ func (s *Store) GetDetail(threadID string) (*github.ThreadDetail, time.Time, err
 		if err := json.Unmarshal([]byte(labelsJSON), &d.Labels); err != nil {
 			return nil, time.Time{}, fmt.Errorf("unmarshal labels: %w", err)
 		}
+	}
+
+	if reviewersJSON != "" {
+		if err := json.Unmarshal([]byte(reviewersJSON), &d.RequestedReviewers); err != nil {
+			return nil, time.Time{}, fmt.Errorf("unmarshal requested_reviewers: %w", err)
+		}
+	}
+
+	if teamsJSON != "" {
+		if err := json.Unmarshal([]byte(teamsJSON), &d.RequestedTeams); err != nil {
+			return nil, time.Time{}, fmt.Errorf("unmarshal requested_teams: %w", err)
+		}
+	}
+
+	if milestone != "" {
+		d.Milestone = &github.Milestone{Title: milestone}
 	}
 
 	if mergedBy.Valid {

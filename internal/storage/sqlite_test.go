@@ -775,3 +775,122 @@ func TestNotificationCount(t *testing.T) {
 		t.Fatalf("expected 2, got %d", count)
 	}
 }
+
+func TestUpsertDetailWithReviewersAndMilestone(t *testing.T) {
+	s := testStore(t)
+	d := &github.ThreadDetail{
+		State:     "open",
+		Body:      "PR body",
+		User:      github.User{Login: "alice"},
+		Additions: 5,
+		Deletions: 2,
+		HTMLURL:   "https://github.com/acme/app/pull/99",
+		RequestedReviewers: []github.User{
+			{Login: "bob"},
+			{Login: "carol"},
+		},
+		RequestedTeams: []github.Team{
+			{Name: "Frontend", Slug: "frontend"},
+		},
+		Milestone: &github.Milestone{Title: "v2.0"},
+	}
+
+	if err := s.UpsertDetail("t-99", d); err != nil {
+		t.Fatalf("UpsertDetail: %v", err)
+	}
+
+	got, fetchedAt, err := s.GetDetail("t-99")
+	if err != nil {
+		t.Fatalf("GetDetail: %v", err)
+	}
+	if fetchedAt.IsZero() {
+		t.Error("fetchedAt should be set")
+	}
+	if got.HTMLURL != "https://github.com/acme/app/pull/99" {
+		t.Errorf("HTMLURL = %q, want https://github.com/acme/app/pull/99", got.HTMLURL)
+	}
+	if len(got.RequestedReviewers) != 2 {
+		t.Fatalf("RequestedReviewers len = %d, want 2", len(got.RequestedReviewers))
+	}
+	if got.RequestedReviewers[0].Login != "bob" {
+		t.Errorf("reviewer[0] = %q, want bob", got.RequestedReviewers[0].Login)
+	}
+	if got.RequestedReviewers[1].Login != "carol" {
+		t.Errorf("reviewer[1] = %q, want carol", got.RequestedReviewers[1].Login)
+	}
+	if len(got.RequestedTeams) != 1 {
+		t.Fatalf("RequestedTeams len = %d, want 1", len(got.RequestedTeams))
+	}
+	if got.RequestedTeams[0].Slug != "frontend" {
+		t.Errorf("team[0].Slug = %q, want frontend", got.RequestedTeams[0].Slug)
+	}
+	if got.Milestone == nil || got.Milestone.Title != "v2.0" {
+		t.Errorf("Milestone = %v, want v2.0", got.Milestone)
+	}
+}
+
+func TestUpsertDetailWithEmptyReviewersAndMilestone(t *testing.T) {
+	s := testStore(t)
+	d := &github.ThreadDetail{
+		State: "open",
+		Body:  "Issue body",
+		User:  github.User{Login: "alice"},
+	}
+
+	if err := s.UpsertDetail("t-100", d); err != nil {
+		t.Fatalf("UpsertDetail: %v", err)
+	}
+
+	got, _, err := s.GetDetail("t-100")
+	if err != nil {
+		t.Fatalf("GetDetail: %v", err)
+	}
+	if len(got.RequestedReviewers) != 0 {
+		t.Errorf("RequestedReviewers should be empty, got %d", len(got.RequestedReviewers))
+	}
+	if len(got.RequestedTeams) != 0 {
+		t.Errorf("RequestedTeams should be empty, got %d", len(got.RequestedTeams))
+	}
+	if got.Milestone != nil {
+		t.Errorf("Milestone should be nil, got %v", got.Milestone)
+	}
+	if got.HTMLURL != "" {
+		t.Errorf("HTMLURL should be empty, got %q", got.HTMLURL)
+	}
+}
+
+func TestUpsertDetailUpdatesReviewers(t *testing.T) {
+	s := testStore(t)
+	d := &github.ThreadDetail{
+		State: "open",
+		User:  github.User{Login: "alice"},
+		RequestedReviewers: []github.User{
+			{Login: "bob"},
+		},
+	}
+
+	if err := s.UpsertDetail("t-101", d); err != nil {
+		t.Fatal(err)
+	}
+
+	// Update with different reviewers
+	d.RequestedReviewers = []github.User{{Login: "carol"}, {Login: "dave"}}
+	d.Milestone = &github.Milestone{Title: "v3.0"}
+	if err := s.UpsertDetail("t-101", d); err != nil {
+		t.Fatal(err)
+	}
+
+	got, _, err := s.GetDetail("t-101")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.RequestedReviewers) != 2 {
+		t.Fatalf("RequestedReviewers len = %d, want 2", len(got.RequestedReviewers))
+	}
+	if got.RequestedReviewers[0].Login != "carol" {
+		t.Errorf("reviewer[0] = %q, want carol", got.RequestedReviewers[0].Login)
+	}
+	if got.Milestone == nil || got.Milestone.Title != "v3.0" {
+		t.Errorf("Milestone = %v, want v3.0", got.Milestone)
+	}
+}

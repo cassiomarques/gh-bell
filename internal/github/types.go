@@ -53,9 +53,13 @@ type ThreadDetail struct {
 	Draft     bool     `json:"draft"`
 	Merged    bool     `json:"merged"`
 	MergedBy  *User    `json:"merged_by"`
+	HTMLURL   string   `json:"html_url"`
 	// PR-specific
-	Additions int `json:"additions"`
-	Deletions int `json:"deletions"`
+	Additions          int         `json:"additions"`
+	Deletions          int         `json:"deletions"`
+	RequestedReviewers []User      `json:"requested_reviewers"`
+	RequestedTeams     []Team      `json:"requested_teams"`
+	Milestone          *Milestone  `json:"milestone"`
 	// Release-specific
 	TagName string `json:"tag_name"`
 
@@ -72,6 +76,17 @@ type Label struct {
 // User represents a GitHub user.
 type User struct {
 	Login string `json:"login"`
+}
+
+// Team represents a GitHub team.
+type Team struct {
+	Name string `json:"name"`
+	Slug string `json:"slug"`
+}
+
+// Milestone represents a GitHub milestone.
+type Milestone struct {
+	Title string `json:"title"`
 }
 
 // Comment represents a GitHub issue/PR comment.
