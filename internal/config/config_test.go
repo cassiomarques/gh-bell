@@ -143,3 +143,51 @@ func TestLoad_CleanupDaysZeroDisables(t *testing.T) {
 		t.Fatalf("expected cleanup_days 0 (disabled) from env, got %d", cfg.CleanupDays)
 	}
 }
+
+func TestLoad_GroupByRepoFromYAML(t *testing.T) {
+	content := `token: ghp_test
+group_by_repo: true
+`
+	cfg := &Config{}
+	if err := parseConfig([]byte(content), cfg); err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if !cfg.GroupByRepo {
+		t.Fatal("expected group_by_repo true")
+	}
+}
+
+func TestLoad_GroupByRepoDefaultFalse(t *testing.T) {
+	content := `token: ghp_test
+`
+	cfg := &Config{}
+	if err := parseConfig([]byte(content), cfg); err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if cfg.GroupByRepo {
+		t.Fatal("expected group_by_repo false by default")
+	}
+}
+
+func TestLoad_GroupByRepoEnvOverride(t *testing.T) {
+	cfg := &Config{}
+	t.Setenv("GH_BELL_GROUP_BY_REPO", "true")
+	applyEnvOverrides(cfg)
+	if !cfg.GroupByRepo {
+		t.Fatal("expected group_by_repo true from env")
+	}
+
+	cfg2 := &Config{}
+	t.Setenv("GH_BELL_GROUP_BY_REPO", "1")
+	applyEnvOverrides(cfg2)
+	if !cfg2.GroupByRepo {
+		t.Fatal("expected group_by_repo true from env=1")
+	}
+
+	cfg3 := &Config{GroupByRepo: true}
+	t.Setenv("GH_BELL_GROUP_BY_REPO", "false")
+	applyEnvOverrides(cfg3)
+	if cfg3.GroupByRepo {
+		t.Fatal("expected group_by_repo false from env=false")
+	}
+}

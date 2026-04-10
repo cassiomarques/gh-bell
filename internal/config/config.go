@@ -26,6 +26,11 @@ token: ""
 # Auto-cleanup: remove read notifications older than N days (default: 15).
 # Set to 0 to disable cleanup.
 # cleanup_days: 15
+
+# Group notifications by repository (default: false).
+# When enabled, notifications are visually grouped under repository headers
+# instead of a flat chronological list. Groups are sorted by most recent item.
+# group_by_repo: false
 `
 
 // Config holds all gh-bell configuration.
@@ -33,6 +38,7 @@ type Config struct {
 	Token           string `yaml:"token"`
 	RefreshInterval int    `yaml:"refresh_interval,omitempty"`
 	CleanupDays     int    `yaml:"cleanup_days,omitempty"`
+	GroupByRepo     bool   `yaml:"group_by_repo,omitempty"`
 }
 
 // Dir returns the gh-bell data/config directory (~/.gh-bell/).
@@ -114,6 +120,9 @@ func applyEnvOverrides(cfg *Config) {
 		} else {
 			log.Printf("ignoring invalid GH_BELL_CLEANUP_DAYS=%q", s)
 		}
+	}
+	if s := os.Getenv("GH_BELL_GROUP_BY_REPO"); s != "" {
+		cfg.GroupByRepo = s == "1" || s == "true"
 	}
 }
 
