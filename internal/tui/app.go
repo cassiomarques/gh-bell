@@ -2336,7 +2336,7 @@ func (a *App) clampScroll() {
 func (a App) hasActiveFilters() bool {
 	return a.repoFilter != "" || a.reasonFilter != "" || a.typeFilter != "" ||
 		a.orgFilter != "" || a.stateFilter != "" || a.ageFilter != 0 || a.titleSearch != "" ||
-		a.participating || a.assignedFilter || a.reviewFilter || a.smartSort || len(a.searchResultIDs) > 0
+		a.participating || a.assignedFilter || a.reviewFilter || len(a.searchResultIDs) > 0
 }
 
 func (a App) contentHeight() int {
@@ -2384,16 +2384,6 @@ func colorizeASCII(lines []string) string {
 func (a App) buildHeader() string {
 	art := colorizeASCII(bellASCII)
 
-	tipKey := lipgloss.NewStyle().Foreground(theme.ColorMauve).Bold(true)
-	tipText := lipgloss.NewStyle().Foreground(theme.ColorOverlay1)
-	tip := tipText.Render("  Tip: ") +
-		tipKey.Render("?") + tipText.Render(" help · ") +
-		tipKey.Render("/") + tipText.Render(" repo · ") +
-		tipKey.Render("s") + tipText.Render(" search · ") +
-		tipKey.Render("1/2/3") + tipText.Render(" views")
-
-	inner := art + "\n\n" + tip
-
 	return lipgloss.NewStyle().
 		Width(a.width).
 		Padding(0, 1).
@@ -2403,7 +2393,7 @@ func (a App) buildHeader() string {
 		BorderLeft(false).
 		BorderRight(false).
 		BorderTop(false).
-		Render(inner)
+		Render(art)
 }
 
 // --- Utilities ---

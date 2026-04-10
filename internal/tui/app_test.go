@@ -721,11 +721,7 @@ func TestApp_HeaderRendering(t *testing.T) {
 	if !strings.Contains(header, "▗▄▄▖") {
 		t.Error("header should contain ASCII art")
 	}
-	// Should contain tip text
-	if !strings.Contains(header, "Tip:") {
-		t.Error("header should contain tip line")
-	}
-	// Should be multi-line
+	// Should be multi-line (ASCII art has several lines)
 	lines := strings.Split(header, "\n")
 	if len(lines) < 5 {
 		t.Errorf("header should be multi-line, got %d lines", len(lines))
