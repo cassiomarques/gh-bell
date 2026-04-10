@@ -726,6 +726,14 @@ func TestApp_HeaderRendering(t *testing.T) {
 	if len(lines) < 5 {
 		t.Errorf("header should be multi-line, got %d lines", len(lines))
 	}
+
+	// Should contain the inline help reference
+	helpKeywords := []string{"repo", "search", "full-text", "reason", "type", "org", "age", "state", "assigned", "sort", "quit", "full help"}
+	for _, kw := range helpKeywords {
+		if !strings.Contains(header, kw) {
+			t.Errorf("header should contain quick-reference keyword %q", kw)
+		}
+	}
 }
 
 func TestApp_NewItemRenderIndicator(t *testing.T) {

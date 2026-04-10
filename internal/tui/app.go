@@ -2384,6 +2384,24 @@ func colorizeASCII(lines []string) string {
 func (a App) buildHeader() string {
 	art := colorizeASCII(bellASCII)
 
+	// Quick-reference help pane to the right of the logo
+	dim := lipgloss.NewStyle().Foreground(theme.Dimmed)
+	key := lipgloss.NewStyle().Foreground(theme.ColorMauve).Bold(true)
+	sep := dim.Render("  ")
+
+	helpLines := []string{
+		key.Render("/") + dim.Render(" repo") + sep + key.Render("s") + dim.Render(" search") + sep + key.Render("S") + dim.Render(" full-text"),
+		key.Render("f") + dim.Render(" reason") + sep + key.Render("t") + dim.Render(" type") + sep + key.Render("o") + dim.Render(" org"),
+		key.Render("a") + dim.Render(" age") + sep + key.Render("x") + dim.Render(" state") + sep + key.Render("p") + dim.Render(" participating"),
+		key.Render("A") + dim.Render(" assigned") + sep + key.Render("V") + dim.Render(" review:me") + sep + key.Render("Ctrl+S") + dim.Render(" sort"),
+		"",
+		key.Render("r") + dim.Render(" read") + sep + key.Render("m") + dim.Render(" mute") + sep + key.Render("Space") + dim.Render(" select"),
+		key.Render("?") + dim.Render(" full help") + sep + key.Render("1/2/3") + dim.Render(" views") + sep + key.Render("q") + dim.Render(" quit"),
+	}
+	help := strings.Join(helpLines, "\n")
+
+	combined := lipgloss.JoinHorizontal(lipgloss.Top, art, "    ", help)
+
 	return lipgloss.NewStyle().
 		Width(a.width).
 		Padding(0, 1).
@@ -2393,7 +2411,7 @@ func (a App) buildHeader() string {
 		BorderLeft(false).
 		BorderRight(false).
 		BorderTop(false).
-		Render(art)
+		Render(combined)
 }
 
 // --- Utilities ---
