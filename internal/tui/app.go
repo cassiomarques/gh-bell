@@ -774,7 +774,7 @@ func (a App) handleListKey(key string) (tea.Model, tea.Cmd) {
 		return a, a.maybeFetchDetail()
 
 	// Actions
-	case " ":
+	case "space", " ":
 		// Toggle selection on current notification and move cursor down
 		if n := a.selectedNotification(); n != nil {
 			if a.selected[n.ID] {
