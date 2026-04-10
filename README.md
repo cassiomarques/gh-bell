@@ -48,9 +48,14 @@ refresh_interval: 60
 # Auto-cleanup: remove read notifications older than N days (default: 15).
 # Set to 0 to disable.
 cleanup_days: 15
+
+# Group notifications by repository (default: false).
+# When enabled, notifications are visually grouped under repository headers
+# instead of a flat chronological list. Groups are sorted by most recent item.
+# group_by_repo: false
 ```
 
-Environment variables `GH_BELL_TOKEN`, `GH_BELL_REFRESH`, and `GH_BELL_CLEANUP_DAYS` still work and **override** the config file (useful for CI or one-off runs).
+Environment variables `GH_BELL_TOKEN`, `GH_BELL_REFRESH`, `GH_BELL_CLEANUP_DAYS`, and `GH_BELL_GROUP_BY_REPO` still work and **override** the config file (useful for CI or one-off runs).
 
 ## Features
 
@@ -73,6 +78,7 @@ Environment variables `GH_BELL_TOKEN`, `GH_BELL_REFRESH`, and `GH_BELL_CLEANUP_D
 - **Log pane** — `Ctrl+L` toggles a live log viewer for debugging
 - **Notification count** — status bar shows filtered/total count
 - **Catppuccin Mocha theme** — beautiful terminal colors out of the box
+- **Group by repository** — optional mode (`group_by_repo: true` in config) that groups notifications under repo headers, sorted by most recent activity. Off by default to preserve flat chronological ordering
 
 ## Keybindings
 
