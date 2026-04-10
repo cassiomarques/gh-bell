@@ -2185,3 +2185,210 @@ func TestMultiSelect_CheckmarkInRow(t *testing.T) {
 		t.Error("selected cursor row should have ✓")
 	}
 }
+
+// --- Group by repository tests ---
+
+func TestGroupByRepo_Disabled_PreservesChronologicalOrder(t *testing.T) {
+	// When groupByRepo is false, notifications from different repos should
+	// remain in their original chronological order (interleaved).
+	a := newTestApp()
+	a.groupByRepo = false
+
+	// Default sample data: org/app (5m ago), org/lib (2h ago), other-org/tool (48h ago), other-org/infra (10d ago)
+	filtered := a.filteredNotifications()
+	if len(filtered) != 4 {
+		t.Fatalf("expected 4 notifications, got %d", len(filtered))
+	}
+
+	// Verify chronological interleaved order (original order)
+	expected := []string{"org/app", "org/lib", "other-org/tool", "other-org/infra"}
+	for i, n := range filtered {
+		if n.Repository.FullName != expected[i] {
+			t.Errorf("position %d: expected repo %s, got %s", i, expected[i], n.Repository.FullName)
+		}
+	}
+}
+
+func TestGroupByRepo_GroupsAndSortsByMostRecent(t *testing.T) {
+	// Create notifications from 3 repos, interleaved chronologically.
+	// repo-a: 1h ago, 5h ago
+	// repo-b: 30m ago, 3h ago
+	// repo-c: 2h ago
+	// Expected group order: repo-b (30m), repo-a (1h), repo-c (2h)
+	now := time.Now()
+	notifications := []github.Notification{
+		{ID: "b1", UpdatedAt: now.Add(-30 * time.Minute), Subject: github.Subject{Title: "B1"}, Repository: github.Repository{FullName: "org/repo-b"}},
+		{ID: "a1", UpdatedAt: now.Add(-1 * time.Hour), Subject: github.Subject{Title: "A1"}, Repository: github.Repository{FullName: "org/repo-a"}},
+		{ID: "c1", UpdatedAt: now.Add(-2 * time.Hour), Subject: github.Subject{Title: "C1"}, Repository: github.Repository{FullName: "org/repo-c"}},
+		{ID: "b2", UpdatedAt: now.Add(-3 * time.Hour), Subject: github.Subject{Title: "B2"}, Repository: github.Repository{FullName: "org/repo-b"}},
+		{ID: "a2", UpdatedAt: now.Add(-5 * time.Hour), Subject: github.Subject{Title: "A2"}, Repository: github.Repository{FullName: "org/repo-a"}},
+	}
+
+	a := newTestApp()
+	a.groupByRepo = true
+	a.notifications = notifications
+
+	filtered := a.filteredNotifications()
+	if len(filtered) != 5 {
+		t.Fatalf("expected 5 notifications, got %d", len(filtered))
+	}
+
+	// Expected order: B1, B2 (repo-b group), A1, A2 (repo-a group), C1 (repo-c group)
+	expectedIDs := []string{"b1", "b2", "a1", "a2", "c1"}
+	for i, n := range filtered {
+		if n.ID != expectedIDs[i] {
+			t.Errorf("position %d: expected ID %s, got %s", i, expectedIDs[i], n.ID)
+		}
+	}
+}
+
+func TestGroupByRepo_WithinGroupPreservesOrder(t *testing.T) {
+	// Items within a repo group should keep their original (chronological) order.
+	now := time.Now()
+	notifications := []github.Notification{
+		{ID: "1", UpdatedAt: now.Add(-1 * time.Hour), Subject: github.Subject{Title: "First"}, Repository: github.Repository{FullName: "org/repo"}},
+		{ID: "2", UpdatedAt: now.Add(-2 * time.Hour), Subject: github.Subject{Title: "Second"}, Repository: github.Repository{FullName: "org/repo"}},
+		{ID: "3", UpdatedAt: now.Add(-3 * time.Hour), Subject: github.Subject{Title: "Third"}, Repository: github.Repository{FullName: "org/repo"}},
+	}
+
+	a := newTestApp()
+	a.groupByRepo = true
+	a.notifications = notifications
+
+	filtered := a.filteredNotifications()
+	for i, n := range filtered {
+		expected := fmt.Sprintf("%d", i+1)
+		if n.ID != expected {
+			t.Errorf("position %d: expected ID %s, got %s", i, expected, n.ID)
+		}
+	}
+}
+
+func TestGroupByRepo_InteractsWithFilters(t *testing.T) {
+	// Grouping should work on the already-filtered result set.
+	now := time.Now()
+	notifications := []github.Notification{
+		{ID: "1", UpdatedAt: now.Add(-1 * time.Hour), Reason: "mention", Subject: github.Subject{Title: "Bug", Type: "Issue"}, Repository: github.Repository{FullName: "org/repo-a"}},
+		{ID: "2", UpdatedAt: now.Add(-2 * time.Hour), Reason: "mention", Subject: github.Subject{Title: "Feature", Type: "Issue"}, Repository: github.Repository{FullName: "org/repo-b"}},
+		{ID: "3", UpdatedAt: now.Add(-30 * time.Minute), Reason: "subscribed", Subject: github.Subject{Title: "CI", Type: "CheckSuite"}, Repository: github.Repository{FullName: "org/repo-b"}},
+	}
+
+	a := newTestApp()
+	a.groupByRepo = true
+	a.notifications = notifications
+	a.reasonFilter = "mention" // filter to mentions only
+
+	filtered := a.filteredNotifications()
+	if len(filtered) != 2 {
+		t.Fatalf("expected 2 mentions, got %d", len(filtered))
+	}
+
+	// After filtering: repo-a (1h), repo-b (2h)
+	// Grouped by repo, sorted by freshest: repo-a first, then repo-b
+	if filtered[0].ID != "1" {
+		t.Errorf("expected repo-a item first, got %s", filtered[0].ID)
+	}
+	if filtered[1].ID != "2" {
+		t.Errorf("expected repo-b item second, got %s", filtered[1].ID)
+	}
+}
+
+func TestGroupByRepo_RepoGroupHeaders(t *testing.T) {
+	now := time.Now()
+	notifications := []github.Notification{
+		{ID: "1", UpdatedAt: now.Add(-1 * time.Hour), Repository: github.Repository{FullName: "org/repo-a"}},
+		{ID: "2", UpdatedAt: now.Add(-2 * time.Hour), Repository: github.Repository{FullName: "org/repo-a"}},
+		{ID: "3", UpdatedAt: now.Add(-3 * time.Hour), Repository: github.Repository{FullName: "org/repo-b"}},
+	}
+
+	headers := repoGroupHeaders(notifications)
+	if len(headers) != 2 {
+		t.Fatalf("expected 2 headers, got %d", len(headers))
+	}
+	if headers[0] != "org/repo-a" {
+		t.Errorf("header[0] = %q, want org/repo-a", headers[0])
+	}
+	if headers[2] != "org/repo-b" {
+		t.Errorf("header[2] = %q, want org/repo-b", headers[2])
+	}
+}
+
+func TestGroupByRepo_HeadersRenderedInList(t *testing.T) {
+	now := time.Now()
+	a := newTestApp()
+	a.groupByRepo = true
+	a.notifications = []github.Notification{
+		{ID: "1", UpdatedAt: now.Add(-1 * time.Hour), Subject: github.Subject{Title: "PR fix", Type: "PullRequest"}, Repository: github.Repository{FullName: "org/repo-a"}},
+		{ID: "2", UpdatedAt: now.Add(-3 * time.Hour), Subject: github.Subject{Title: "Bug report", Type: "Issue"}, Repository: github.Repository{FullName: "org/repo-b"}},
+	}
+
+	output := a.renderNotificationListSized(a.filteredNotifications(), 20, 120)
+	if !strings.Contains(output, "org/repo-a") {
+		t.Error("expected repo-a header in output")
+	}
+	if !strings.Contains(output, "org/repo-b") {
+		t.Error("expected repo-b header in output")
+	}
+	if !strings.Contains(output, "📁") {
+		t.Error("expected 📁 icon in group headers")
+	}
+}
+
+func TestGroupByRepo_Disabled_NoHeaders(t *testing.T) {
+	a := newTestApp()
+	a.groupByRepo = false
+
+	output := a.renderNotificationListSized(a.filteredNotifications(), 20, 120)
+	if strings.Contains(output, "📁") {
+		t.Error("group headers should not appear when groupByRepo is disabled")
+	}
+}
+
+func TestGroupByRepo_HeadersInRange(t *testing.T) {
+	headers := map[int]string{0: "repo-a", 3: "repo-b", 7: "repo-c"}
+
+	if n := headersInRange(headers, 0, 4); n != 2 {
+		t.Errorf("headersInRange(0,4) = %d, want 2", n)
+	}
+	if n := headersInRange(headers, 1, 7); n != 1 {
+		t.Errorf("headersInRange(1,7) = %d, want 1", n)
+	}
+	if n := headersInRange(headers, 0, 10); n != 3 {
+		t.Errorf("headersInRange(0,10) = %d, want 3", n)
+	}
+}
+
+func TestGroupByRepo_EmptyNotifications(t *testing.T) {
+	a := newTestApp()
+	a.groupByRepo = true
+	a.notifications = nil
+
+	filtered := a.filteredNotifications()
+	if len(filtered) != 0 {
+		t.Fatalf("expected 0 notifications, got %d", len(filtered))
+	}
+}
+
+func TestGroupByRepo_SingleRepo(t *testing.T) {
+	// All items from one repo — grouping should be identity.
+	now := time.Now()
+	a := newTestApp()
+	a.groupByRepo = true
+	a.notifications = []github.Notification{
+		{ID: "1", UpdatedAt: now.Add(-1 * time.Hour), Repository: github.Repository{FullName: "org/only-repo"}},
+		{ID: "2", UpdatedAt: now.Add(-2 * time.Hour), Repository: github.Repository{FullName: "org/only-repo"}},
+	}
+
+	filtered := a.filteredNotifications()
+	if len(filtered) != 2 {
+		t.Fatalf("expected 2, got %d", len(filtered))
+	}
+	if filtered[0].ID != "1" || filtered[1].ID != "2" {
+		t.Error("single repo group should preserve original order")
+	}
+
+	headers := repoGroupHeaders(filtered)
+	if len(headers) != 1 {
+		t.Errorf("expected 1 header for single repo, got %d", len(headers))
+	}
+}

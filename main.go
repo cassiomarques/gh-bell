@@ -125,6 +125,12 @@ func main() {
 		log.Printf("auto-cleanup set to %d days", cfg.CleanupDays)
 	}
 
+	// Pass group-by-repo config
+	if cfg.GroupByRepo {
+		opts = append(opts, tui.WithGroupByRepo(true))
+		log.Printf("group-by-repo enabled")
+	}
+
 	app := tui.NewApp(client, opts...)
 	p := tea.NewProgram(app)
 

@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"log"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -127,6 +128,9 @@ type App struct {
 	// Cleanup
 	cleanupDays int
 
+	// Grouping
+	groupByRepo bool // group notifications by repository
+
 	// Header cache (rebuilt on resize)
 	headerCache string
 }
@@ -160,6 +164,13 @@ func WithLogFile(path string) Option {
 func WithCleanupDays(days int) Option {
 	return func(a *App) {
 		a.cleanupDays = days
+	}
+}
+
+// WithGroupByRepo enables grouping notifications by repository.
+func WithGroupByRepo(enabled bool) Option {
+	return func(a *App) {
+		a.groupByRepo = enabled
 	}
 }
 
@@ -1305,18 +1316,40 @@ func wordWrap(text string, maxWidth int) []string {
 	return result
 }
 
+// renderRepoGroupHeader renders a visually distinct repository group header line.
+func (a App) renderRepoGroupHeader(repo string, width int) string {
+	label := " 📁 " + repo + " "
+	lineLen := width - lipgloss.Width(label)
+	if lineLen < 0 {
+		lineLen = 0
+	}
+	line := strings.Repeat("─", lineLen)
+	return lipgloss.NewStyle().
+		Foreground(theme.ColorMauve).
+		Bold(true).
+		Width(width).MaxWidth(width).
+		Render(label + lipgloss.NewStyle().Foreground(theme.ColorSurface2).Render(line))
+}
+
 func (a App) renderNotificationListSized(notifications []github.Notification, height, width int) string {
 	a.clampScroll()
-	end := a.offset + height
-	if end > len(notifications) {
-		end = len(notifications)
+
+	var headers map[int]string
+	if a.groupByRepo {
+		headers = repoGroupHeaders(notifications)
 	}
-	visible := notifications[a.offset:end]
 
 	var rows []string
-	for i, n := range visible {
-		idx := a.offset + i
-		rows = append(rows, a.renderNotificationRowSized(n, idx == a.cursor, width))
+	idx := a.offset
+	for idx < len(notifications) && len(rows) < height {
+		if repo, ok := headers[idx]; ok {
+			rows = append(rows, a.renderRepoGroupHeader(repo, width))
+			if len(rows) >= height {
+				break
+			}
+		}
+		rows = append(rows, a.renderNotificationRowSized(notifications[idx], idx == a.cursor, width))
+		idx++
 	}
 
 	for len(rows) < height {
@@ -1409,16 +1442,23 @@ func (a App) renderNotificationRowSized(n github.Notification, isCursor bool, wi
 
 func (a App) renderNotificationList(notifications []github.Notification, height int) string {
 	a.clampScroll()
-	end := a.offset + height
-	if end > len(notifications) {
-		end = len(notifications)
+
+	var headers map[int]string
+	if a.groupByRepo {
+		headers = repoGroupHeaders(notifications)
 	}
-	visible := notifications[a.offset:end]
 
 	var rows []string
-	for i, n := range visible {
-		idx := a.offset + i
-		rows = append(rows, a.renderNotificationRow(n, idx == a.cursor))
+	idx := a.offset
+	for idx < len(notifications) && len(rows) < height {
+		if repo, ok := headers[idx]; ok {
+			rows = append(rows, a.renderRepoGroupHeader(repo, a.width))
+			if len(rows) >= height {
+				break
+			}
+		}
+		rows = append(rows, a.renderNotificationRow(notifications[idx], idx == a.cursor))
+		idx++
 	}
 
 	// Pad remaining height
@@ -1633,78 +1673,88 @@ func (a App) renderCentered(text string, height int) string {
 // --- State helpers ---
 
 func (a App) filteredNotifications() []github.Notification {
-	if !a.hasActiveFilters() {
-		return a.notifications
-	}
-	var ageCutoff time.Time
-	if a.ageFilter > 0 {
-		ageCutoff = time.Now().Add(-ageFilterDuration(a.ageFilter))
-	}
 	var result []github.Notification
-	for _, n := range a.notifications {
-		if a.repoFilter != "" && !strings.Contains(
-			strings.ToLower(n.Repository.FullName),
-			strings.ToLower(a.repoFilter),
-		) {
-			continue
+
+	if !a.hasActiveFilters() {
+		result = a.notifications
+	} else {
+		var ageCutoff time.Time
+		if a.ageFilter > 0 {
+			ageCutoff = time.Now().Add(-ageFilterDuration(a.ageFilter))
 		}
-		if a.reasonFilter != "" && n.Reason != a.reasonFilter {
-			continue
-		}
-		if a.typeFilter != "" && n.Subject.Type != a.typeFilter {
-			continue
-		}
-		if a.orgFilter != "" && orgFromFullName(n.Repository.FullName) != a.orgFilter {
-			continue
-		}
-		if a.participating && !participatingReasons[n.Reason] {
-			continue
-		}
-		if a.ageFilter > 0 && n.UpdatedAt.Before(ageCutoff) {
-			continue
-		}
-		if a.titleSearch != "" && !strings.Contains(
-			strings.ToLower(n.Subject.Title),
-			strings.ToLower(a.titleSearch),
-		) {
-			continue
-		}
-		// Full-text search filter: only show notifications matching Bleve results
-		if len(a.searchResultIDs) > 0 && !a.searchResultIDs[n.ID] {
-			continue
-		}
-		// Assigned-to-me filter: check thread detail's assignees list
-		if a.assignedFilter && a.currentUser != "" {
-			detail := a.detailCache[n.ID]
-			if detail == nil {
-				// Also check if notification reason is "assign" as a fallback
-				if n.Reason != "assign" {
-					continue
-				}
-			} else {
-				assigned := false
-				for _, u := range detail.Assignees {
-					if strings.EqualFold(u.Login, a.currentUser) {
-						assigned = true
-						break
-					}
-				}
-				if !assigned && n.Reason != "assign" {
-					continue
-				}
-			}
-		}
-		// State filter: match effective state from thread detail
-		if a.stateFilter != "" {
-			detail := a.detailCache[n.ID]
-			if detail == nil {
-				continue // no detail cached yet, skip
-			}
-			if effectiveState(detail) != a.stateFilter {
+		for _, n := range a.notifications {
+			if a.repoFilter != "" && !strings.Contains(
+				strings.ToLower(n.Repository.FullName),
+				strings.ToLower(a.repoFilter),
+			) {
 				continue
 			}
+			if a.reasonFilter != "" && n.Reason != a.reasonFilter {
+				continue
+			}
+			if a.typeFilter != "" && n.Subject.Type != a.typeFilter {
+				continue
+			}
+			if a.orgFilter != "" && orgFromFullName(n.Repository.FullName) != a.orgFilter {
+				continue
+			}
+			if a.participating && !participatingReasons[n.Reason] {
+				continue
+			}
+			if a.ageFilter > 0 && n.UpdatedAt.Before(ageCutoff) {
+				continue
+			}
+			if a.titleSearch != "" && !strings.Contains(
+				strings.ToLower(n.Subject.Title),
+				strings.ToLower(a.titleSearch),
+			) {
+				continue
+			}
+			// Full-text search filter: only show notifications matching Bleve results
+			if len(a.searchResultIDs) > 0 && !a.searchResultIDs[n.ID] {
+				continue
+			}
+			// Assigned-to-me filter: check thread detail's assignees list
+			if a.assignedFilter && a.currentUser != "" {
+				detail := a.detailCache[n.ID]
+				if detail == nil {
+					// Also check if notification reason is "assign" as a fallback
+					if n.Reason != "assign" {
+						continue
+					}
+				} else {
+					assigned := false
+					for _, u := range detail.Assignees {
+						if strings.EqualFold(u.Login, a.currentUser) {
+							assigned = true
+							break
+						}
+					}
+					if !assigned && n.Reason != "assign" {
+						continue
+					}
+				}
+			}
+			// State filter: match effective state from thread detail
+			if a.stateFilter != "" {
+				detail := a.detailCache[n.ID]
+				if detail == nil {
+					continue // no detail cached yet, skip
+				}
+				if effectiveState(detail) != a.stateFilter {
+					continue
+				}
+			}
+			result = append(result, n)
 		}
-		result = append(result, n)
+	}
+
+	// When group-by-repo is enabled, reorder results into repo groups.
+	// Groups are sorted by their most-recent notification; items within
+	// each group keep chronological order. This runs after filtering so
+	// grouping respects all active filters.
+	if a.groupByRepo {
+		result = groupByRepository(result)
 	}
 	return result
 }
@@ -1864,6 +1914,79 @@ func ageFilterLabel(age int) string {
 	}
 }
 
+// groupByRepository reorders notifications into repo groups.
+// Groups are sorted by their most-recent item (descending).
+// Items within each group retain their original order (by updated_at desc).
+func groupByRepository(notifications []github.Notification) []github.Notification {
+	if len(notifications) == 0 {
+		return notifications
+	}
+
+	// Collect items per repo, preserving insertion order
+	type repoInfo struct {
+		repo      string
+		items     []github.Notification
+		latestAt  time.Time
+	}
+	repoMap := make(map[string]*repoInfo)
+	var order []string
+	for _, n := range notifications {
+		repo := n.Repository.FullName
+		ri, ok := repoMap[repo]
+		if !ok {
+			ri = &repoInfo{repo: repo}
+			repoMap[repo] = ri
+			order = append(order, repo)
+		}
+		ri.items = append(ri.items, n)
+		if n.UpdatedAt.After(ri.latestAt) {
+			ri.latestAt = n.UpdatedAt
+		}
+	}
+
+	// Sort groups by most-recent item descending
+	groups := make([]*repoInfo, len(order))
+	for i, repo := range order {
+		groups[i] = repoMap[repo]
+	}
+	sort.SliceStable(groups, func(i, j int) bool {
+		return groups[i].latestAt.After(groups[j].latestAt)
+	})
+
+	// Flatten back
+	result := make([]github.Notification, 0, len(notifications))
+	for _, g := range groups {
+		result = append(result, g.items...)
+	}
+	return result
+}
+
+// repoGroupHeaders returns a map from notification index to repo name
+// for positions where a group header should be rendered. A header appears
+// before the first notification in each repo group.
+func repoGroupHeaders(notifications []github.Notification) map[int]string {
+	headers := make(map[int]string)
+	lastRepo := ""
+	for i, n := range notifications {
+		if n.Repository.FullName != lastRepo {
+			headers[i] = n.Repository.FullName
+			lastRepo = n.Repository.FullName
+		}
+	}
+	return headers
+}
+
+// headersInRange counts how many repo group headers appear in [start, end).
+func headersInRange(headers map[int]string, start, end int) int {
+	count := 0
+	for idx := range headers {
+		if idx >= start && idx < end {
+			count++
+		}
+	}
+	return count
+}
+
 func (a *App) collectFilterOptions() {
 	seenReasons := make(map[string]bool)
 	seenTypes := make(map[string]bool)
@@ -1977,8 +2100,25 @@ func (a *App) clampScroll() {
 	if a.cursor < a.offset {
 		a.offset = a.cursor
 	}
-	if a.cursor >= a.offset+height {
-		a.offset = a.cursor - height + 1
+
+	if a.groupByRepo {
+		// In grouped mode, repo headers consume visual rows between offset
+		// and cursor. We must ensure that the cursor row plus any headers
+		// above it fit within the viewport.
+		filtered := a.filteredNotifications()
+		headers := repoGroupHeaders(filtered)
+		for {
+			h := headersInRange(headers, a.offset, a.cursor+1)
+			visualEnd := (a.cursor - a.offset) + 1 + h
+			if visualEnd <= height {
+				break
+			}
+			a.offset++
+		}
+	} else {
+		if a.cursor >= a.offset+height {
+			a.offset = a.cursor - height + 1
+		}
 	}
 }
 
