@@ -2392,3 +2392,161 @@ func TestGroupByRepo_SingleRepo(t *testing.T) {
 		t.Errorf("expected 1 header for single repo, got %d", len(headers))
 	}
 }
+
+// --- Scroll and cursor regression tests ---
+// These lock down scroll/offset/cursor behavior that the collapsible
+// groups refactor would touch.
+
+func TestClampScroll_CursorBelowViewport(t *testing.T) {
+	a := newTestApp()
+	a.height = 10 // small viewport so contentHeight is small
+	a.width = 120
+	a.notifications = sampleNotifications()
+
+	h := a.contentHeight()
+	// Place cursor well beyond the viewport
+	a.cursor = 3
+	a.offset = 0
+	a.clampScroll()
+
+	if a.cursor < a.offset || a.cursor >= a.offset+h {
+		t.Errorf("cursor %d should be visible in [%d, %d)", a.cursor, a.offset, a.offset+h)
+	}
+}
+
+func TestClampScroll_CursorAboveViewport(t *testing.T) {
+	a := newTestApp()
+	a.height = 10
+	a.width = 120
+
+	a.offset = 3
+	a.cursor = 0
+	a.clampScroll()
+
+	if a.offset > a.cursor {
+		t.Errorf("offset %d should be <= cursor %d", a.offset, a.cursor)
+	}
+}
+
+func TestRenderList_ScrolledDown_ShowsCorrectItems(t *testing.T) {
+	now := time.Now()
+	var notifications []github.Notification
+	for i := 0; i < 20; i++ {
+		notifications = append(notifications, github.Notification{
+			ID: fmt.Sprintf("%d", i), Unread: true, Reason: "mention",
+			UpdatedAt:  now.Add(-time.Duration(i) * time.Hour),
+			Subject:    github.Subject{Title: fmt.Sprintf("Item %d", i), Type: "Issue"},
+			Repository: github.Repository{FullName: "org/repo"},
+		})
+	}
+
+	a := newTestApp()
+	a.notifications = notifications
+	a.cursor = 10
+	a.offset = 10
+	a.height = 15
+	a.width = 120
+
+	output := a.renderNotificationListSized(a.filteredNotifications(), 5, 120)
+	// Should show Item 10 (cursor position), not Item 0
+	if !strings.Contains(output, "Item 10") {
+		t.Error("scrolled list should show Item 10 at offset 10")
+	}
+	if strings.Contains(output, "Item 0") {
+		t.Error("scrolled list should NOT show Item 0 when offset=10")
+	}
+}
+
+func TestSelectedNotification_AfterScroll(t *testing.T) {
+	now := time.Now()
+	var notifications []github.Notification
+	for i := 0; i < 10; i++ {
+		notifications = append(notifications, github.Notification{
+			ID: fmt.Sprintf("%d", i), Unread: true,
+			UpdatedAt:  now.Add(-time.Duration(i) * time.Hour),
+			Subject:    github.Subject{Title: fmt.Sprintf("Item %d", i), Type: "Issue"},
+			Repository: github.Repository{FullName: "org/repo"},
+		})
+	}
+
+	a := newTestApp()
+	a.notifications = notifications
+	a.cursor = 5
+	a.offset = 3
+
+	n := a.selectedNotification()
+	if n == nil {
+		t.Fatal("selectedNotification should not be nil")
+	}
+	if n.ID != "5" {
+		t.Errorf("expected notification ID 5, got %s", n.ID)
+	}
+}
+
+func TestListPane_GG_JumpsToTop(t *testing.T) {
+	a := newTestApp()
+	a.cursor = 3
+	a.offset = 2
+	a.focused = focusList
+
+	// Simulate first 'g'
+	a.lastKey = "g"
+	a.lastKeyTime = time.Now()
+
+	// Simulate second 'g' within 500ms
+	result, _ := a.handleListKey("g")
+	updated := result.(App)
+
+	if updated.cursor != 0 {
+		t.Errorf("gg should set cursor to 0, got %d", updated.cursor)
+	}
+}
+
+func TestListPane_G_JumpsToBottom(t *testing.T) {
+	a := newTestApp()
+	a.cursor = 0
+	a.focused = focusList
+
+	result, _ := a.handleListKey("G")
+	updated := result.(App)
+
+	expected := len(a.filteredNotifications()) - 1
+	if updated.cursor != expected {
+		t.Errorf("G should set cursor to %d, got %d", expected, updated.cursor)
+	}
+}
+
+func TestMultiSelect_SurvivesScroll(t *testing.T) {
+	now := time.Now()
+	var notifications []github.Notification
+	for i := 0; i < 10; i++ {
+		notifications = append(notifications, github.Notification{
+			ID: fmt.Sprintf("%d", i), Unread: true,
+			UpdatedAt:  now.Add(-time.Duration(i) * time.Hour),
+			Subject:    github.Subject{Title: fmt.Sprintf("Item %d", i), Type: "Issue"},
+			Repository: github.Repository{FullName: "org/repo"},
+		})
+	}
+
+	a := newTestApp()
+	a.notifications = notifications
+
+	// Select items 2 and 5
+	a.selected["2"] = true
+	a.selected["5"] = true
+
+	// Scroll down
+	a.cursor = 8
+	a.offset = 5
+
+	// Selection should still be intact
+	if !a.selected["2"] || !a.selected["5"] {
+		t.Error("selection should survive scrolling")
+	}
+
+	// selectedNotifications should return the selected items
+	sel := a.selectedNotifications()
+	if len(sel) != 2 {
+		t.Errorf("expected 2 selected notifications, got %d", len(sel))
+	}
+}
