@@ -2872,3 +2872,172 @@ func TestActionCachePopulatedInChronologicalMode(t *testing.T) {
 		t.Error("action cache should be populated even in chronological mode")
 	}
 }
+
+func TestPreviewShowsGraphQLEnrichment(t *testing.T) {
+	a := newTestApp()
+	a.width = 120
+	a.height = 40
+	now := time.Now()
+	a.notifications = []github.Notification{
+		{
+			ID:         "pr-gql",
+			Reason:     "review_requested",
+			UpdatedAt:  now,
+			Subject:    github.Subject{Title: "Enriched PR", Type: "PullRequest", URL: "https://api.github.com/repos/org/repo/pulls/99"},
+			Repository: github.Repository{FullName: "org/repo"},
+		},
+	}
+	a.detailCache = map[string]*github.ThreadDetail{
+		"pr-gql": {
+			State:          "open",
+			User:           github.User{Login: "alice"},
+			ReviewDecision: "APPROVED",
+			CIStatus:       "SUCCESS",
+			Mergeable:      "MERGEABLE",
+		},
+	}
+
+	preview := a.renderPreview(40, 100)
+
+	if !strings.Contains(preview, "Approved") {
+		t.Error("preview should show review decision 'Approved'")
+	}
+	if !strings.Contains(preview, "Passing") {
+		t.Error("preview should show CI status 'Passing'")
+	}
+	if !strings.Contains(preview, "Mergeable") {
+		t.Error("preview should show mergeable status")
+	}
+}
+
+func TestPreviewGraphQLChangesRequested(t *testing.T) {
+	a := newTestApp()
+	a.width = 120
+	a.height = 40
+	now := time.Now()
+	a.notifications = []github.Notification{
+		{
+			ID:         "pr-cr",
+			Reason:     "review_requested",
+			UpdatedAt:  now,
+			Subject:    github.Subject{Title: "Needs fixes", Type: "PullRequest"},
+			Repository: github.Repository{FullName: "org/repo"},
+		},
+	}
+	a.detailCache = map[string]*github.ThreadDetail{
+		"pr-cr": {
+			State:          "open",
+			User:           github.User{Login: "bob"},
+			ReviewDecision: "CHANGES_REQUESTED",
+			CIStatus:       "FAILURE",
+			Mergeable:      "CONFLICTING",
+		},
+	}
+
+	preview := a.renderPreview(40, 100)
+
+	if !strings.Contains(preview, "Changes requested") {
+		t.Error("preview should show 'Changes requested'")
+	}
+	if !strings.Contains(preview, "Failed") {
+		t.Error("preview should show CI 'Failed'")
+	}
+	if !strings.Contains(preview, "Conflicts") {
+		t.Error("preview should show 'Conflicts'")
+	}
+}
+
+func TestMaybeEnrichPRsSkipsNonPRs(t *testing.T) {
+	a := newTestApp()
+	now := time.Now()
+	a.notifications = []github.Notification{
+		{
+			ID:         "issue1",
+			Reason:     "assign",
+			UpdatedAt:  now,
+			Subject:    github.Subject{Title: "Bug", Type: "Issue"},
+			Repository: github.Repository{FullName: "org/repo"},
+		},
+	}
+	a.detailCache = map[string]*github.ThreadDetail{
+		"issue1": {State: "open"},
+	}
+
+	// Without a service, should return nil
+	cmd := a.maybeEnrichPRs()
+	if cmd != nil {
+		t.Error("maybeEnrichPRs should return nil when no service and no PRs")
+	}
+}
+
+func TestMaybeEnrichPRsSkipsAlreadyEnriched(t *testing.T) {
+	a := newTestApp()
+	now := time.Now()
+	a.notifications = []github.Notification{
+		{
+			ID:         "pr-enriched",
+			Reason:     "review_requested",
+			UpdatedAt:  now,
+			Subject:    github.Subject{Title: "Already enriched", Type: "PullRequest", URL: "https://api.github.com/repos/org/repo/pulls/1"},
+			Repository: github.Repository{FullName: "org/repo"},
+		},
+	}
+	a.detailCache = map[string]*github.ThreadDetail{
+		"pr-enriched": {
+			State:          "open",
+			ReviewDecision: "APPROVED", // already has GraphQL data
+			CIStatus:       "SUCCESS",
+		},
+	}
+
+	cmd := a.maybeEnrichPRs()
+	if cmd != nil {
+		t.Error("maybeEnrichPRs should return nil when PRs are already enriched")
+	}
+}
+
+func TestEnrichmentMsgUpdatesDetailCache(t *testing.T) {
+	a := newTestApp()
+	now := time.Now()
+	commitAt := now.Add(-1 * time.Hour)
+	a.notifications = []github.Notification{
+		{
+			ID:         "pr-to-enrich",
+			Reason:     "review_requested",
+			UpdatedAt:  now,
+			Subject:    github.Subject{Title: "PR", Type: "PullRequest"},
+			Repository: github.Repository{FullName: "org/repo"},
+		},
+	}
+	a.detailCache = map[string]*github.ThreadDetail{
+		"pr-to-enrich": {State: "open", User: github.User{Login: "alice"}},
+	}
+
+	msg := prEnrichmentMsg{
+		enrichments: map[string]*github.PREnrichment{
+			"pr-to-enrich": {
+				ReviewDecision: "REVIEW_REQUIRED",
+				CIStatus:       "PENDING",
+				Mergeable:      "MERGEABLE",
+				LatestCommitAt: &commitAt,
+			},
+		},
+	}
+
+	updated, _ := a.Update(msg)
+	a = updated.(App)
+
+	detail := a.detailCache["pr-to-enrich"]
+	if detail.ReviewDecision != "REVIEW_REQUIRED" {
+		t.Errorf("ReviewDecision = %q, want REVIEW_REQUIRED", detail.ReviewDecision)
+	}
+	if detail.CIStatus != "PENDING" {
+		t.Errorf("CIStatus = %q, want PENDING", detail.CIStatus)
+	}
+	if detail.Mergeable != "MERGEABLE" {
+		t.Errorf("Mergeable = %q, want MERGEABLE", detail.Mergeable)
+	}
+	if detail.LatestCommitAt == nil || !detail.LatestCommitAt.Equal(commitAt) {
+		t.Errorf("LatestCommitAt = %v, want %v", detail.LatestCommitAt, commitAt)
+	}
+}

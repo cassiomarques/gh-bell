@@ -286,6 +286,47 @@ func (s *NotificationService) FetchAndStoreDetail(threadID, subjectURL, commentU
 	return detail, nil
 }
 
+// EnrichPRs calls the GraphQL API to enrich PR notifications with review decision,
+// CI status, mergeable state, and timestamps. Results are merged into the detail
+// cache and persisted in SQLite.
+func (s *NotificationService) EnrichPRs(notifications []github.Notification) (map[string]*github.PREnrichment, error) {
+	var refs []github.PRRef
+	for _, n := range notifications {
+		if n.Subject.Type != "PullRequest" {
+			continue
+		}
+		owner, repo, number, ok := github.ParseSubjectURL(n.Subject.URL)
+		if !ok {
+			continue
+		}
+		refs = append(refs, github.PRRef{
+			Owner:    owner,
+			Repo:     repo,
+			Number:   number,
+			ThreadID: n.ID,
+		})
+	}
+	if len(refs) == 0 {
+		return nil, nil
+	}
+
+	log.Printf("enrichment: enriching %d PRs via GraphQL", len(refs))
+	enriched, err := s.client.EnrichPRsBatch(refs)
+	if err != nil {
+		return nil, fmt.Errorf("graphql enrichment: %w", err)
+	}
+
+	// Persist enrichment data to SQLite
+	for threadID, e := range enriched {
+		if storeErr := s.store.UpdateDetailEnrichment(threadID, e); storeErr != nil {
+			log.Printf("warning: failed to persist enrichment for %s: %v", threadID, storeErr)
+		}
+	}
+
+	log.Printf("enrichment: enriched %d/%d PRs", len(enriched), len(refs))
+	return enriched, nil
+}
+
 // --- Actions ---
 
 // MarkThreadRead marks a thread as read via the API and updates the local cache.

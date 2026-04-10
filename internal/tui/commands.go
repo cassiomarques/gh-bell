@@ -383,3 +383,18 @@ func logTickCmd(logFile string) tea.Cmd {
 		return logUpdatedMsg{lines: lines}
 	})
 }
+
+// enrichPRsCmd triggers background GraphQL enrichment for PR notifications.
+func enrichPRsCmd(svc *service.NotificationService, notifications []github.Notification) tea.Cmd {
+	if svc == nil {
+		return nil
+	}
+	return func() tea.Msg {
+		enriched, err := svc.EnrichPRs(notifications)
+		if err != nil {
+			log.Printf("enrichment: error: %v", err)
+			return prEnrichmentMsg{} // empty is fine, non-fatal
+		}
+		return prEnrichmentMsg{enrichments: enriched}
+	}
+}

@@ -894,3 +894,98 @@ func TestUpsertDetailUpdatesReviewers(t *testing.T) {
 		t.Errorf("Milestone = %v, want v3.0", got.Milestone)
 	}
 }
+
+func TestDetailGraphQLEnrichmentRoundTrip(t *testing.T) {
+	s := testStore(t)
+	threadID := "gql-1"
+
+	commitAt := time.Date(2025, 3, 10, 14, 0, 0, 0, time.UTC)
+	reviewAt := time.Date(2025, 3, 10, 15, 30, 0, 0, time.UTC)
+
+	// First upsert a basic detail
+	detail := &github.ThreadDetail{
+		State: "open",
+		Body:  "PR body",
+		User:  github.User{Login: "alice"},
+	}
+	if err := s.UpsertDetail(threadID, detail); err != nil {
+		t.Fatal(err)
+	}
+
+	// Then enrich via UpdateDetailEnrichment
+	enrichment := &github.PREnrichment{
+		ReviewDecision: "APPROVED",
+		CIStatus:       "SUCCESS",
+		Mergeable:      "MERGEABLE",
+		LatestCommitAt: &commitAt,
+		LatestReviewAt: &reviewAt,
+	}
+	if err := s.UpdateDetailEnrichment(threadID, enrichment); err != nil {
+		t.Fatal(err)
+	}
+
+	// Read back and verify all fields
+	got, _, err := s.GetDetail(threadID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if got.State != "open" {
+		t.Errorf("State = %q, want open", got.State)
+	}
+	if got.ReviewDecision != "APPROVED" {
+		t.Errorf("ReviewDecision = %q, want APPROVED", got.ReviewDecision)
+	}
+	if got.CIStatus != "SUCCESS" {
+		t.Errorf("CIStatus = %q, want SUCCESS", got.CIStatus)
+	}
+	if got.Mergeable != "MERGEABLE" {
+		t.Errorf("Mergeable = %q, want MERGEABLE", got.Mergeable)
+	}
+	if got.LatestCommitAt == nil || !got.LatestCommitAt.Equal(commitAt) {
+		t.Errorf("LatestCommitAt = %v, want %v", got.LatestCommitAt, commitAt)
+	}
+	if got.LatestReviewAt == nil || !got.LatestReviewAt.Equal(reviewAt) {
+		t.Errorf("LatestReviewAt = %v, want %v", got.LatestReviewAt, reviewAt)
+	}
+}
+
+func TestDetailGraphQLFieldsViaUpsert(t *testing.T) {
+	s := testStore(t)
+	threadID := "gql-2"
+
+	commitAt := time.Date(2025, 4, 1, 10, 0, 0, 0, time.UTC)
+
+	detail := &github.ThreadDetail{
+		State:          "open",
+		User:           github.User{Login: "bob"},
+		ReviewDecision: "CHANGES_REQUESTED",
+		CIStatus:       "FAILURE",
+		Mergeable:      "CONFLICTING",
+		LatestCommitAt: &commitAt,
+	}
+	if err := s.UpsertDetail(threadID, detail); err != nil {
+		t.Fatal(err)
+	}
+
+	got, _, err := s.GetDetail(threadID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if got.ReviewDecision != "CHANGES_REQUESTED" {
+		t.Errorf("ReviewDecision = %q, want CHANGES_REQUESTED", got.ReviewDecision)
+	}
+	if got.CIStatus != "FAILURE" {
+		t.Errorf("CIStatus = %q, want FAILURE", got.CIStatus)
+	}
+	if got.Mergeable != "CONFLICTING" {
+		t.Errorf("Mergeable = %q, want CONFLICTING", got.Mergeable)
+	}
+	if got.LatestCommitAt == nil || !got.LatestCommitAt.Equal(commitAt) {
+		t.Errorf("LatestCommitAt = %v, want %v", got.LatestCommitAt, commitAt)
+	}
+	if got.LatestReviewAt != nil {
+		t.Errorf("LatestReviewAt = %v, want nil", got.LatestReviewAt)
+	}
+}

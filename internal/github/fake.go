@@ -64,3 +64,7 @@ func (f *FakeClient) FetchThreadDetail(subjectURL, _ string) (*ThreadDetail, err
 func (f *FakeClient) GetCurrentUser() (string, error) {
 	return f.CurrentUser, nil
 }
+
+func (f *FakeClient) EnrichPRsBatch(_ []PRRef) (map[string]*PREnrichment, error) {
+	return nil, nil
+}

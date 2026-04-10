@@ -138,6 +138,9 @@ type App struct {
 	smartSort   bool                          // true = sort by score, false = chronological
 	actionCache map[string]scoring.ActionReason // notification ID → computed action
 
+	// GraphQL enrichment
+	enriching bool // true while a background enrichment batch is in flight
+
 	// Header cache (rebuilt on resize)
 	headerCache string
 }
@@ -335,13 +338,14 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// Fetch enriched detail for the currently selected notification
 		detailCmd := a.maybeFetchDetail()
+		enrichCmd := a.maybeEnrichPRs()
 
 		if len(newIDs) > 0 {
 			a.statusText = fmt.Sprintf("%d new", len(newIDs))
 			a.statusError = false
-			return a, tea.Batch(clearStatusCmd(), detailCmd)
+			return a, tea.Batch(clearStatusCmd(), detailCmd, enrichCmd)
 		}
-		return a, detailCmd
+		return a, tea.Batch(detailCmd, enrichCmd)
 
 	case cachedNotificationsLoadedMsg:
 		// Show cached data instantly on startup — no "new" indicators,
@@ -453,11 +457,25 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if a.detailLoading == msg.threadID {
 			a.detailLoading = ""
 		}
-		return a, nil
+		// Try enriching PRs now that we have a new detail cached
+		return a, a.maybeEnrichPRs()
 
 	case threadDetailErrorMsg:
 		if a.detailLoading == msg.threadID {
 			a.detailLoading = ""
+		}
+		return a, nil
+
+	case prEnrichmentMsg:
+		a.enriching = false
+		for threadID, e := range msg.enrichments {
+			if detail, ok := a.detailCache[threadID]; ok && detail != nil {
+				detail.ReviewDecision = e.ReviewDecision
+				detail.CIStatus = e.CIStatus
+				detail.Mergeable = e.Mergeable
+				detail.LatestCommitAt = e.LatestCommitAt
+				detail.LatestReviewAt = e.LatestReviewAt
+			}
 		}
 		return a, nil
 
@@ -1292,6 +1310,53 @@ func (a App) renderEnrichedDetail(lines []string, detail *github.ThreadDetail, s
 		lines = append(lines, dim.Render("  Changes: ")+val.Render(stats))
 	}
 
+	// GraphQL enrichment fields (review decision, CI, mergeable)
+	if detail.ReviewDecision != "" {
+		rdLabel := detail.ReviewDecision
+		rdColor := theme.ColorText
+		switch detail.ReviewDecision {
+		case "APPROVED":
+			rdLabel = "Approved"
+			rdColor = theme.ColorGreen
+		case "CHANGES_REQUESTED":
+			rdLabel = "Changes requested"
+			rdColor = theme.ColorRed
+		case "REVIEW_REQUIRED":
+			rdLabel = "Review required"
+			rdColor = theme.ColorYellow
+		}
+		lines = append(lines, dim.Render("  Review:  ")+lipgloss.NewStyle().Foreground(rdColor).Render(rdLabel))
+	}
+	if detail.CIStatus != "" {
+		ciLabel := detail.CIStatus
+		ciColor := theme.ColorText
+		switch strings.ToUpper(detail.CIStatus) {
+		case "SUCCESS":
+			ciLabel = "✓ Passing"
+			ciColor = theme.ColorGreen
+		case "FAILURE", "ERROR":
+			ciLabel = "✗ Failed"
+			ciColor = theme.ColorRed
+		case "PENDING":
+			ciLabel = "● Pending"
+			ciColor = theme.ColorYellow
+		}
+		lines = append(lines, dim.Render("  CI:      ")+lipgloss.NewStyle().Foreground(ciColor).Render(ciLabel))
+	}
+	if detail.Mergeable != "" && detail.Mergeable != "UNKNOWN" {
+		mgLabel := detail.Mergeable
+		mgColor := theme.ColorText
+		switch detail.Mergeable {
+		case "MERGEABLE":
+			mgLabel = "✓ Mergeable"
+			mgColor = theme.ColorGreen
+		case "CONFLICTING":
+			mgLabel = "✗ Conflicts"
+			mgColor = theme.ColorRed
+		}
+		lines = append(lines, dim.Render("  Merge:   ")+lipgloss.NewStyle().Foreground(mgColor).Render(mgLabel))
+	}
+
 	// Requested reviewers (PR-specific)
 	if len(detail.RequestedReviewers) > 0 || len(detail.RequestedTeams) > 0 {
 		var parts []string
@@ -1301,7 +1366,7 @@ func (a App) renderEnrichedDetail(lines []string, detail *github.ThreadDetail, s
 		for _, t := range detail.RequestedTeams {
 			parts = append(parts, "@"+t.Slug)
 		}
-		lines = append(lines, dim.Render("  Review:  ")+lipgloss.NewStyle().Foreground(theme.ColorPeach).Render(strings.Join(parts, ", ")))
+		lines = append(lines, dim.Render("  Rvwrs:   ")+lipgloss.NewStyle().Foreground(theme.ColorPeach).Render(strings.Join(parts, ", ")))
 	}
 
 	// Milestone
@@ -2188,6 +2253,30 @@ func (a *App) maybeFetchDetail() tea.Cmd {
 		fetchThreadDetailCmd(a.client, a.service, n.ID, n.Subject.URL, n.Subject.LatestCommentURL, n),
 		spinnerTickCmd(),
 	)
+}
+
+// maybeEnrichPRs returns a Cmd to batch-enrich PR notifications via GraphQL,
+// or nil if already enriching or no service is available.
+func (a *App) maybeEnrichPRs() tea.Cmd {
+	if a.service == nil || a.enriching {
+		return nil
+	}
+	// Only enrich PRs that have a detail cached but no GraphQL data yet
+	var toEnrich []github.Notification
+	for _, n := range a.notifications {
+		if n.Subject.Type != "PullRequest" {
+			continue
+		}
+		detail := a.detailCache[n.ID]
+		if detail != nil && detail.ReviewDecision == "" && detail.CIStatus == "" {
+			toEnrich = append(toEnrich, n)
+		}
+	}
+	if len(toEnrich) == 0 {
+		return nil
+	}
+	a.enriching = true
+	return enrichPRsCmd(a.service, toEnrich)
 }
 
 // orgFromFullName extracts the owner/org from "owner/repo".

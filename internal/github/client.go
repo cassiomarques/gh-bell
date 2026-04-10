@@ -22,6 +22,7 @@ type NotificationAPI interface {
 	UnsubscribeThread(threadID string) error
 	FetchThreadDetail(subjectURL, commentURL string) (*ThreadDetail, error)
 	GetCurrentUser() (string, error)
+	EnrichPRsBatch(prs []PRRef) (map[string]*PREnrichment, error)
 }
 
 // ListResult holds the notifications returned by a single API page along with
@@ -70,7 +71,8 @@ type ListOptions struct {
 
 // Client wraps the GitHub REST API for notification operations.
 type Client struct {
-	rest *api.RESTClient
+	rest  *api.RESTClient
+	token string
 }
 
 // NewClient creates a Client using the provided token. If token is empty,
@@ -91,7 +93,7 @@ func NewClient(token string) (*Client, error) {
 			return nil, fmt.Errorf("creating GitHub API client (is gh authenticated?): %w", err)
 		}
 	}
-	return &Client{rest: rest}, nil
+	return &Client{rest: rest, token: token}, nil
 }
 
 // ListNotifications fetches notifications according to the given options.

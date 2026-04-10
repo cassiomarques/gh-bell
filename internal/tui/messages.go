@@ -102,3 +102,8 @@ type cleanupDoneMsg struct {
 type logUpdatedMsg struct {
 	lines []string
 }
+
+// prEnrichmentMsg carries GraphQL enrichment results for PR notifications.
+type prEnrichmentMsg struct {
+	enrichments map[string]*github.PREnrichment
+}

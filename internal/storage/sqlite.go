@@ -124,6 +124,11 @@ func (s *Store) migrate() error {
 		"ALTER TABLE thread_details ADD COLUMN requested_reviewers_json TEXT DEFAULT ''",
 		"ALTER TABLE thread_details ADD COLUMN requested_teams_json TEXT DEFAULT ''",
 		"ALTER TABLE thread_details ADD COLUMN milestone TEXT DEFAULT ''",
+		"ALTER TABLE thread_details ADD COLUMN review_decision TEXT DEFAULT ''",
+		"ALTER TABLE thread_details ADD COLUMN ci_status TEXT DEFAULT ''",
+		"ALTER TABLE thread_details ADD COLUMN mergeable TEXT DEFAULT ''",
+		"ALTER TABLE thread_details ADD COLUMN latest_commit_at DATETIME",
+		"ALTER TABLE thread_details ADD COLUMN latest_review_at DATETIME",
 	}
 	for _, ddl := range newCols {
 		s.db.Exec(ddl) // ignore "duplicate column" errors
@@ -376,13 +381,22 @@ func (s *Store) UpsertDetail(threadID string, d *github.ThreadDetail) error {
 		commentAt = sql.NullTime{Time: d.LatestComment.CreatedAt.UTC(), Valid: true}
 	}
 
+	var latestCommitAt, latestReviewAt sql.NullTime
+	if d.LatestCommitAt != nil {
+		latestCommitAt = sql.NullTime{Time: d.LatestCommitAt.UTC(), Valid: true}
+	}
+	if d.LatestReviewAt != nil {
+		latestReviewAt = sql.NullTime{Time: d.LatestReviewAt.UTC(), Valid: true}
+	}
+
 	now := time.Now().UTC()
 	_, err = s.db.Exec(`
 		INSERT INTO thread_details (thread_id, state, body, author, labels_json,
 			draft, merged, merged_by, additions, deletions, tag_name,
 			comment_body, comment_author, comment_at, fetched_at,
-			html_url, requested_reviewers_json, requested_teams_json, milestone)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			html_url, requested_reviewers_json, requested_teams_json, milestone,
+			review_decision, ci_status, mergeable, latest_commit_at, latest_review_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(thread_id) DO UPDATE SET
 			state = excluded.state,
 			body = excluded.body,
@@ -401,11 +415,17 @@ func (s *Store) UpsertDetail(threadID string, d *github.ThreadDetail) error {
 			html_url = excluded.html_url,
 			requested_reviewers_json = excluded.requested_reviewers_json,
 			requested_teams_json = excluded.requested_teams_json,
-			milestone = excluded.milestone`,
+			milestone = excluded.milestone,
+			review_decision = excluded.review_decision,
+			ci_status = excluded.ci_status,
+			mergeable = excluded.mergeable,
+			latest_commit_at = excluded.latest_commit_at,
+			latest_review_at = excluded.latest_review_at`,
 		threadID, d.State, d.Body, d.User.Login, string(labelsJSON),
 		d.Draft, d.Merged, mergedBy, d.Additions, d.Deletions, d.TagName,
 		commentBody, commentAuthor, commentAt, now,
 		d.HTMLURL, string(reviewersJSON), string(teamsJSON), milestone,
+		d.ReviewDecision, d.CIStatus, d.Mergeable, latestCommitAt, latestReviewAt,
 	)
 	return err
 }
@@ -419,12 +439,14 @@ func (s *Store) GetDetail(threadID string) (*github.ThreadDetail, time.Time, err
 	var commentBody, commentAuthor sql.NullString
 	var commentAt sql.NullTime
 	var fetchedAt time.Time
+	var latestCommitAt, latestReviewAt sql.NullTime
 
 	err := s.db.QueryRow(`
 		SELECT state, body, author, labels_json, draft, merged, merged_by,
 			additions, deletions, tag_name, comment_body, comment_author,
 			comment_at, fetched_at,
-			html_url, requested_reviewers_json, requested_teams_json, milestone
+			html_url, requested_reviewers_json, requested_teams_json, milestone,
+			review_decision, ci_status, mergeable, latest_commit_at, latest_review_at
 		FROM thread_details WHERE thread_id = ?`, threadID,
 	).Scan(
 		&d.State, &d.Body, &d.User.Login, &labelsJSON,
@@ -432,6 +454,7 @@ func (s *Store) GetDetail(threadID string) (*github.ThreadDetail, time.Time, err
 		&d.Additions, &d.Deletions, &d.TagName,
 		&commentBody, &commentAuthor, &commentAt, &fetchedAt,
 		&d.HTMLURL, &reviewersJSON, &teamsJSON, &milestone,
+		&d.ReviewDecision, &d.CIStatus, &d.Mergeable, &latestCommitAt, &latestReviewAt,
 	)
 	if err == sql.ErrNoRows {
 		return nil, time.Time{}, nil
@@ -476,7 +499,41 @@ func (s *Store) GetDetail(threadID string) (*github.ThreadDetail, time.Time, err
 		}
 	}
 
+	if latestCommitAt.Valid {
+		t := latestCommitAt.Time
+		d.LatestCommitAt = &t
+	}
+	if latestReviewAt.Valid {
+		t := latestReviewAt.Time
+		d.LatestReviewAt = &t
+	}
+
 	return &d, fetchedAt, nil
+}
+
+// UpdateDetailEnrichment updates only the GraphQL enrichment fields for an
+// existing thread detail row. Does nothing if the thread has no detail cached.
+func (s *Store) UpdateDetailEnrichment(threadID string, e *github.PREnrichment) error {
+	var latestCommitAt, latestReviewAt sql.NullTime
+	if e.LatestCommitAt != nil {
+		latestCommitAt = sql.NullTime{Time: e.LatestCommitAt.UTC(), Valid: true}
+	}
+	if e.LatestReviewAt != nil {
+		latestReviewAt = sql.NullTime{Time: e.LatestReviewAt.UTC(), Valid: true}
+	}
+	_, err := s.db.Exec(`
+		UPDATE thread_details SET
+			review_decision = ?,
+			ci_status = ?,
+			mergeable = ?,
+			latest_commit_at = ?,
+			latest_review_at = ?
+		WHERE thread_id = ?`,
+		e.ReviewDecision, e.CIStatus, e.Mergeable,
+		latestCommitAt, latestReviewAt,
+		threadID,
+	)
+	return err
 }
 
 // DeleteDetail removes cached thread detail.

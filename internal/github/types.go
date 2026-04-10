@@ -63,12 +63,12 @@ type ThreadDetail struct {
 	// Release-specific
 	TagName string `json:"tag_name"`
 
-	// GraphQL enrichment (Phase 2 — empty until populated)
-	ReviewDecision string     `json:"-"` // APPROVED, CHANGES_REQUESTED, REVIEW_REQUIRED
-	CIStatus       string     `json:"-"` // success, failure, pending, error
-	Mergeable      string     `json:"-"` // MERGEABLE, CONFLICTING, UNKNOWN
-	LatestCommitAt *time.Time `json:"-"`
-	LatestReviewAt *time.Time `json:"-"`
+	// GraphQL enrichment (populated by EnrichPRsBatch, persisted in SQLite)
+	ReviewDecision string     `json:"review_decision,omitempty"` // APPROVED, CHANGES_REQUESTED, REVIEW_REQUIRED
+	CIStatus       string     `json:"ci_status,omitempty"`       // SUCCESS, FAILURE, PENDING, ERROR
+	Mergeable      string     `json:"mergeable,omitempty"`       // MERGEABLE, CONFLICTING, UNKNOWN
+	LatestCommitAt *time.Time `json:"latest_commit_at,omitempty"`
+	LatestReviewAt *time.Time `json:"latest_review_at,omitempty"`
 
 	// From latest_comment_url (fetched separately)
 	LatestComment *Comment

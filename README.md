@@ -87,6 +87,7 @@ Environment variables `GH_BELL_TOKEN`, `GH_BELL_REFRESH`, `GH_BELL_CLEANUP_DAYS`
 - **Smart sort** — priority scoring engine that ranks notifications by actionability. Review requests, CI failures, and items needing your attention float to the top; informational items (merged, closed) sink. Toggle at runtime with `Ctrl+S` or set `sort_mode: smart` in config (enabled by default)
 - **Action labels** — when smart sort is active, the reason column shows computed action labels (e.g., "Review req.", "CI failed", "Approved") with color coding: red for urgent, yellow for attention needed, green for positive, dim for informational
 - **Review-requested filter** — `V` filters to notifications where your review was explicitly requested
+- **GraphQL enrichment** — automatically fetches PR review decision, CI status, and merge conflicts via GitHub's GraphQL API. Data is displayed in the preview pane and improves smart sort accuracy. Enrichment runs in the background and results are persisted in SQLite
 
 ## Keybindings
 
