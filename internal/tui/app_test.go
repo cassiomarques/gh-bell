@@ -2612,3 +2612,92 @@ func TestPreviewHidesEmptyReviewersAndMilestone(t *testing.T) {
 		t.Error("preview should not show Mile line when no milestone")
 	}
 }
+
+func TestReviewFilterShowsOnlyReviewRequested(t *testing.T) {
+	a := newTestApp()
+	a.currentUser = "myuser"
+	a.reviewFilter = true
+	a.detailCache = make(map[string]*github.ThreadDetail)
+
+	// Notification 1: my review requested (via detail)
+	a.detailCache["1"] = &github.ThreadDetail{
+		State:              "open",
+		RequestedReviewers: []github.User{{Login: "myuser"}},
+	}
+	// Notification 2: someone else's review requested
+	a.detailCache["2"] = &github.ThreadDetail{
+		State:              "open",
+		RequestedReviewers: []github.User{{Login: "otheruser"}},
+	}
+
+	filtered := a.filteredNotifications()
+	if len(filtered) != 1 {
+		t.Fatalf("expected 1 filtered notification, got %d", len(filtered))
+	}
+	if filtered[0].ID != "1" {
+		t.Errorf("expected notification 1, got %s", filtered[0].ID)
+	}
+}
+
+func TestReviewFilterFallsBackToReason(t *testing.T) {
+	a := newTestApp()
+	a.currentUser = "myuser"
+	a.reviewFilter = true
+	a.detailCache = make(map[string]*github.ThreadDetail)
+
+	// Notification 1 has no detail cached but reason is review_requested
+	a.notifications[0].Reason = "review_requested"
+	// Notification 2 has no detail and reason is mention
+	a.notifications[1].Reason = "mention"
+
+	filtered := a.filteredNotifications()
+	if len(filtered) != 1 {
+		t.Fatalf("expected 1 filtered notification, got %d", len(filtered))
+	}
+	if filtered[0].ID != "1" {
+		t.Errorf("expected notification 1, got %s", filtered[0].ID)
+	}
+}
+
+func TestReviewFilterCaseInsensitive(t *testing.T) {
+	a := newTestApp()
+	a.currentUser = "MyUser"
+	a.reviewFilter = true
+	a.detailCache = make(map[string]*github.ThreadDetail)
+
+	a.detailCache["1"] = &github.ThreadDetail{
+		State:              "open",
+		RequestedReviewers: []github.User{{Login: "myuser"}},
+	}
+
+	filtered := a.filteredNotifications()
+	if len(filtered) != 1 {
+		t.Fatalf("expected 1 filtered notification, got %d", len(filtered))
+	}
+}
+
+func TestReviewFilterClearedByEsc(t *testing.T) {
+	a := newTestApp()
+	a.reviewFilter = true
+
+	if !a.hasActiveFilters() {
+		t.Error("reviewFilter should make hasActiveFilters true")
+	}
+
+	// Simulate Esc key press
+	a.reviewFilter = false
+	if a.hasActiveFilters() {
+		t.Error("after clearing, hasActiveFilters should be false")
+	}
+}
+
+func TestFilterBarShowsReviewMe(t *testing.T) {
+	a := newTestApp()
+	a.reviewFilter = true
+	a.width = 80
+
+	bar := a.renderFilters()
+	if !strings.Contains(bar, "review:me") {
+		t.Error("filter bar should show review:me when review filter is active")
+	}
+}

@@ -86,6 +86,7 @@ type App struct {
 	titleSearch    string
 	participating  bool
 	assignedFilter bool   // show only notifications assigned to current user
+	reviewFilter   bool   // show only notifications where my review is requested
 	currentUser    string // authenticated GitHub login (fetched once)
 	filterInput    filterMode
 	filterBuf      string
@@ -584,6 +585,7 @@ func (a App) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			a.titleSearch = ""
 			a.participating = false
 			a.assignedFilter = false
+			a.reviewFilter = false
 			a.searchResultIDs = nil
 			a.searchQuery = ""
 			a.cursor = 0
@@ -872,6 +874,11 @@ func (a App) handleListKey(key string) (tea.Model, tea.Cmd) {
 		a.cursor = 0
 		a.offset = 0
 		return a, nil
+	case "V":
+		a.reviewFilter = !a.reviewFilter
+		a.cursor = 0
+		a.offset = 0
+		return a, nil
 	case "x":
 		a.cycleStateFilter()
 		a.cursor = 0
@@ -1066,6 +1073,9 @@ func (a App) renderFilters() string {
 	}
 	if a.assignedFilter {
 		parts = append(parts, "assigned:me")
+	}
+	if a.reviewFilter {
+		parts = append(parts, "review:me")
 	}
 	label := strings.Join(parts, "  ")
 	hint := lipgloss.NewStyle().Foreground(theme.Dimmed).Render("  (Esc to clear)")
@@ -1752,6 +1762,27 @@ func (a App) filteredNotifications() []github.Notification {
 					}
 				}
 			}
+			// Review-requested filter: check if my review is requested
+			if a.reviewFilter && a.currentUser != "" {
+				detail := a.detailCache[n.ID]
+				if detail == nil {
+					// Fallback to notification reason
+					if n.Reason != "review_requested" {
+						continue
+					}
+				} else {
+					requested := false
+					for _, u := range detail.RequestedReviewers {
+						if strings.EqualFold(u.Login, a.currentUser) {
+							requested = true
+							break
+						}
+					}
+					if !requested && n.Reason != "review_requested" {
+						continue
+					}
+				}
+			}
 			// State filter: match effective state from thread detail
 			if a.stateFilter != "" {
 				detail := a.detailCache[n.ID]
@@ -2142,7 +2173,7 @@ func (a *App) clampScroll() {
 func (a App) hasActiveFilters() bool {
 	return a.repoFilter != "" || a.reasonFilter != "" || a.typeFilter != "" ||
 		a.orgFilter != "" || a.stateFilter != "" || a.ageFilter != 0 || a.titleSearch != "" ||
-		a.participating || a.assignedFilter || len(a.searchResultIDs) > 0
+		a.participating || a.assignedFilter || a.reviewFilter || len(a.searchResultIDs) > 0
 }
 
 func (a App) contentHeight() int {
@@ -2292,6 +2323,8 @@ func (a App) renderHelpOverlay() string {
 	b.WriteString(line("p", "Toggle participating"))
 	b.WriteByte('\n')
 	b.WriteString(line("A", "Toggle assigned to me"))
+	b.WriteByte('\n')
+	b.WriteString(line("V", "Toggle review requested"))
 	b.WriteByte('\n')
 	b.WriteString(line("Esc", "Clear filters"))
 	b.WriteByte('\n')
