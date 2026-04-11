@@ -1379,7 +1379,8 @@ func (a App) renderEnrichedDetail(lines []string, detail *github.ThreadDetail, s
 		lines = append(lines, dim.Render("  Tag:     ")+val.Render(detail.TagName))
 	}
 
-	// Body — rendered as markdown for rich formatting
+	// Body — rendered as markdown for rich formatting.
+	// For PRs/issues with no comments, the body is the primary content.
 	if detail.Body != "" {
 		lines = append(lines, "")
 		lines = append(lines, dim.Render("  ─── Description ───"))
@@ -1387,6 +1388,10 @@ func (a App) renderEnrichedDetail(lines []string, detail *github.ThreadDetail, s
 		for _, bl := range strings.Split(rendered, "\n") {
 			lines = append(lines, "  "+bl)
 		}
+	} else if subjectType == "PullRequest" || subjectType == "Issue" {
+		lines = append(lines, "")
+		lines = append(lines, dim.Render("  ─── Description ───"))
+		lines = append(lines, dim.Render("  (No description provided)"))
 	}
 
 	// Latest comment — rendered as markdown

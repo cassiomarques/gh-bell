@@ -2619,6 +2619,46 @@ func TestPreviewHidesEmptyReviewersAndMilestone(t *testing.T) {
 	}
 }
 
+func TestPreviewShowsBodyForNewPR(t *testing.T) {
+	a := newTestApp()
+	a.detailCache = make(map[string]*github.ThreadDetail)
+	a.detailCache["1"] = &github.ThreadDetail{
+		State: "open",
+		User:  github.User{Login: "author"},
+		Body:  "This PR adds a new feature for notifications.",
+	}
+
+	preview := a.renderPreview(40, 80)
+
+	if !strings.Contains(preview, "Description") {
+		t.Error("preview should show Description section")
+	}
+	// renderMarkdown may inject ANSI codes; check for key words individually
+	if !strings.Contains(preview, "new feature") {
+		t.Error("preview should show the PR body text")
+	}
+}
+
+func TestPreviewShowsNoDescriptionPlaceholder(t *testing.T) {
+	a := newTestApp()
+	// First notification is a PullRequest (set in newTestApp)
+	a.detailCache = make(map[string]*github.ThreadDetail)
+	a.detailCache["1"] = &github.ThreadDetail{
+		State: "open",
+		User:  github.User{Login: "author"},
+		Body:  "", // empty body
+	}
+
+	preview := a.renderPreview(40, 80)
+
+	if !strings.Contains(preview, "Description") {
+		t.Error("preview should show Description section even with empty body")
+	}
+	if !strings.Contains(preview, "No description provided") {
+		t.Error("preview should show placeholder when body is empty for a PR")
+	}
+}
+
 func TestReviewFilterShowsOnlyReviewRequested(t *testing.T) {
 	a := newTestApp()
 	a.currentUser = "myuser"
