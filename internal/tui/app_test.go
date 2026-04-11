@@ -50,6 +50,8 @@ func newTestApp() App {
 		detailCache: make(map[string]*github.ThreadDetail),
 		selected:    make(map[string]bool),
 		actionCache: make(map[string]scoring.ActionReason),
+		scoreCache:  make(map[string]float64),
+		scoreDirty:  true,
 	}
 	a.notifications = sampleNotifications()
 	a.collectFilterOptions()
@@ -2787,6 +2789,65 @@ func TestSmartSortReordersNotifications(t *testing.T) {
 	}
 	if filtered[1].ID != "low" {
 		t.Errorf("smart sort should put subscribed last, got %s", filtered[1].ID)
+	}
+}
+
+func TestSmartSortStableAfterRemoval(t *testing.T) {
+	now := time.Now()
+	a := newTestApp()
+	a.smartSort = true
+	a.currentUser = "alice"
+	a.notifications = []github.Notification{
+		{
+			ID:         "review",
+			Reason:     "review_requested",
+			UpdatedAt:  now.Add(-30 * time.Minute),
+			Subject:    github.Subject{Title: "Review please", Type: "PullRequest"},
+			Repository: github.Repository{FullName: "org/repo-a"},
+		},
+		{
+			ID:         "mention",
+			Reason:     "mention",
+			UpdatedAt:  now.Add(-1 * time.Hour),
+			Subject:    github.Subject{Title: "Mentioned", Type: "Issue"},
+			Repository: github.Repository{FullName: "org/repo-b"},
+		},
+		{
+			ID:         "subscribed",
+			Reason:     "subscribed",
+			UpdatedAt:  now.Add(-2 * time.Hour),
+			Subject:    github.Subject{Title: "Subscribed", Type: "PullRequest"},
+			Repository: github.Repository{FullName: "org/repo-c"},
+		},
+	}
+	a.detailCache = map[string]*github.ThreadDetail{
+		"review": {
+			State:              "open",
+			RequestedReviewers: []github.User{{Login: "alice"}},
+		},
+	}
+
+	// First call computes scores
+	filtered1 := a.filteredNotifications()
+	if len(filtered1) != 3 {
+		t.Fatalf("expected 3 notifications, got %d", len(filtered1))
+	}
+	order1 := []string{filtered1[0].ID, filtered1[1].ID, filtered1[2].ID}
+
+	// Simulate marking the top item as read (remove it)
+	a.removeNotification(filtered1[0].ID)
+
+	// Second call should preserve the relative order of remaining items
+	filtered2 := a.filteredNotifications()
+	if len(filtered2) != 2 {
+		t.Fatalf("expected 2 notifications after removal, got %d", len(filtered2))
+	}
+
+	// The remaining items should appear in the same relative order
+	remaining := []string{order1[1], order1[2]}
+	if filtered2[0].ID != remaining[0] || filtered2[1].ID != remaining[1] {
+		t.Errorf("sort order changed after removal: got [%s, %s], want [%s, %s]",
+			filtered2[0].ID, filtered2[1].ID, remaining[0], remaining[1])
 	}
 }
 

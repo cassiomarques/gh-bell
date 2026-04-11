@@ -137,6 +137,8 @@ type App struct {
 	// Scoring / sort mode
 	smartSort   bool                          // true = sort by score, false = chronological
 	actionCache map[string]scoring.ActionReason // notification ID → computed action
+	scoreCache  map[string]float64             // notification ID → cached score
+	scoreDirty  bool                           // true when scores need recomputation
 
 	// GraphQL enrichment
 	enriching bool // true while a background enrichment batch is in flight
@@ -200,6 +202,8 @@ func NewApp(client github.NotificationAPI, opts ...Option) App {
 		detailCache: make(map[string]*github.ThreadDetail),
 		selected:    make(map[string]bool),
 		actionCache: make(map[string]scoring.ActionReason),
+		scoreCache:  make(map[string]float64),
+		scoreDirty:  true,
 		smartSort:   true, // default to smart sort
 	}
 	for _, opt := range opts {
@@ -317,6 +321,7 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.loading = false
 		a.statusText = ""
 		a.statusError = false
+		a.scoreDirty = true
 		a.collectFilterOptions()
 
 		// Restore cursor to the previously selected notification
@@ -354,6 +359,7 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			log.Printf("update: cachedNotificationsLoadedMsg with %d notifications", len(msg.notifications))
 			a.notifications = msg.notifications
 			a.loading = true // still loading from API
+			a.scoreDirty = true
 			a.collectFilterOptions()
 			a.clampCursor()
 			return a, a.maybeFetchDetail()
@@ -454,6 +460,7 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case threadDetailLoadedMsg:
 		a.detailCache[msg.threadID] = msg.detail
+		a.scoreDirty = true // detail may change action classification
 		if a.detailLoading == msg.threadID {
 			a.detailLoading = ""
 		}
@@ -468,6 +475,7 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case prEnrichmentMsg:
 		a.enriching = false
+		a.scoreDirty = true // enrichment data may change scores
 		for threadID, e := range msg.enrichments {
 			if detail, ok := a.detailCache[threadID]; ok && detail != nil {
 				detail.ReviewDecision = e.ReviewDecision
@@ -574,6 +582,7 @@ func (a App) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return a, nil
 	case "ctrl+s":
 		a.smartSort = !a.smartSort
+		a.scoreDirty = true
 		a.cursor = 0
 		a.offset = 0
 		if a.smartSort {
@@ -1911,33 +1920,50 @@ func (a App) filteredNotifications() []github.Notification {
 	}
 
 	// Smart sort: sort by priority score (highest first).
-	// Runs after filtering, before group-by-repo so groups contain
-	// correctly ordered items.
+	// Scores are cached and only recomputed when scoreDirty is set
+	// (e.g. after a refresh or sort toggle) to keep the list stable
+	// when marking items as read.
 	if a.smartSort {
-		now := time.Now()
-		scored := scoring.ScoreAll(result, a.detailCache, a.currentUser, now)
-		sort.SliceStable(scored, func(i, j int) bool {
-			diff := scored[i].Score - scored[j].Score
+		if a.scoreDirty {
+			now := time.Now()
+			scored := scoring.ScoreAll(result, a.detailCache, a.currentUser, now)
+			for _, s := range scored {
+				a.actionCache[s.Notification.ID] = s.Action
+				a.scoreCache[s.Notification.ID] = s.Score
+			}
+			a.scoreDirty = false
+		} else {
+			// Ensure actions are populated for any new items
+			for _, n := range result {
+				if _, ok := a.actionCache[n.ID]; !ok {
+					detail := a.detailCache[n.ID]
+					a.actionCache[n.ID] = scoring.ComputeAction(n, detail, a.currentUser)
+					a.scoreCache[n.ID] = scoring.ComputeScore(a.actionCache[n.ID], n.UpdatedAt, time.Now())
+				}
+			}
+		}
+		sort.SliceStable(result, func(i, j int) bool {
+			si := a.scoreCache[result[i].ID]
+			sj := a.scoreCache[result[j].ID]
+			diff := si - sj
 			if diff > 0.01 {
 				return true
 			}
 			if diff < -0.01 {
 				return false
 			}
-			return scored[i].Notification.UpdatedAt.After(scored[j].Notification.UpdatedAt)
+			return result[i].UpdatedAt.After(result[j].UpdatedAt)
 		})
-		result = result[:0]
-		for _, s := range scored {
-			a.actionCache[s.Notification.ID] = s.Action
-			result = append(result, s.Notification)
-		}
 	} else {
 		// Chronological mode — still compute actions for labels but don't sort
-		now := time.Now()
-		for _, n := range result {
-			detail := a.detailCache[n.ID]
-			a.actionCache[n.ID] = scoring.ComputeAction(n, detail, a.currentUser)
-			_ = scoring.ComputeScore(a.actionCache[n.ID], n.UpdatedAt, now)
+		if a.scoreDirty {
+			now := time.Now()
+			for _, n := range result {
+				detail := a.detailCache[n.ID]
+				a.actionCache[n.ID] = scoring.ComputeAction(n, detail, a.currentUser)
+				a.scoreCache[n.ID] = scoring.ComputeScore(a.actionCache[n.ID], n.UpdatedAt, now)
+			}
+			a.scoreDirty = false
 		}
 	}
 
