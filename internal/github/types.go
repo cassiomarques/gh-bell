@@ -54,21 +54,23 @@ type ThreadDetail struct {
 	Merged    bool     `json:"merged"`
 	MergedBy  *User    `json:"merged_by"`
 	HTMLURL   string   `json:"html_url"`
-	// PR-specific
+	// PR-specific (REST)
 	Additions          int         `json:"additions"`
 	Deletions          int         `json:"deletions"`
+	MergeableREST      *bool       `json:"mergeable"`     // REST API: bool or null
 	RequestedReviewers []User      `json:"requested_reviewers"`
 	RequestedTeams     []Team      `json:"requested_teams"`
 	Milestone          *Milestone  `json:"milestone"`
 	// Release-specific
 	TagName string `json:"tag_name"`
 
-	// GraphQL enrichment (populated by EnrichPRsBatch, persisted in SQLite)
-	ReviewDecision string     `json:"review_decision,omitempty"` // APPROVED, CHANGES_REQUESTED, REVIEW_REQUIRED
-	CIStatus       string     `json:"ci_status,omitempty"`       // SUCCESS, FAILURE, PENDING, ERROR
-	Mergeable      string     `json:"mergeable,omitempty"`       // MERGEABLE, CONFLICTING, UNKNOWN
-	LatestCommitAt *time.Time `json:"latest_commit_at,omitempty"`
-	LatestReviewAt *time.Time `json:"latest_review_at,omitempty"`
+	// GraphQL enrichment (populated by EnrichPRsBatch, persisted in SQLite).
+	// Tags use "-" to avoid collision with REST JSON fields.
+	ReviewDecision string     `json:"-"` // APPROVED, CHANGES_REQUESTED, REVIEW_REQUIRED
+	CIStatus       string     `json:"-"` // SUCCESS, FAILURE, PENDING, ERROR
+	Mergeable      string     `json:"-"` // MERGEABLE, CONFLICTING, UNKNOWN
+	LatestCommitAt *time.Time `json:"-"`
+	LatestReviewAt *time.Time `json:"-"`
 
 	// From latest_comment_url (fetched separately)
 	LatestComment *Comment

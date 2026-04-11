@@ -1367,6 +1367,13 @@ func (a App) renderEnrichedDetail(lines []string, detail *github.ThreadDetail, s
 			mgColor = theme.ColorRed
 		}
 		lines = append(lines, dim.Render("  Merge:   ")+lipgloss.NewStyle().Foreground(mgColor).Render(mgLabel))
+	} else if detail.MergeableREST != nil {
+		// Fallback to REST API boolean when GraphQL hasn't enriched yet
+		if *detail.MergeableREST {
+			lines = append(lines, dim.Render("  Merge:   ")+lipgloss.NewStyle().Foreground(theme.ColorGreen).Render("✓ Mergeable"))
+		} else {
+			lines = append(lines, dim.Render("  Merge:   ")+lipgloss.NewStyle().Foreground(theme.ColorRed).Render("✗ Conflicts"))
+		}
 	}
 
 	// Requested reviewers (PR-specific)
