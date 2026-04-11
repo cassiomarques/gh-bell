@@ -44,14 +44,15 @@ func sampleNotifications() []github.Notification {
 
 func newTestApp() App {
 	a := App{
-		currentView: github.ViewUnread,
-		width:       120,
-		height:      24,
-		detailCache: make(map[string]*github.ThreadDetail),
-		selected:    make(map[string]bool),
-		actionCache: make(map[string]scoring.ActionReason),
-		scoreCache:  make(map[string]float64),
-		scoreDirty:  true,
+		currentView:    github.ViewUnread,
+		width:          120,
+		height:         24,
+		detailCache:    make(map[string]*github.ThreadDetail),
+		detailFetchedAt: make(map[string]time.Time),
+		selected:       make(map[string]bool),
+		actionCache:    make(map[string]scoring.ActionReason),
+		scoreCache:     make(map[string]float64),
+		repoOrderCache: make(map[string]int),
 	}
 	a.notifications = sampleNotifications()
 	a.collectFilterOptions()
@@ -2848,6 +2849,66 @@ func TestSmartSortStableAfterRemoval(t *testing.T) {
 	if filtered2[0].ID != remaining[0] || filtered2[1].ID != remaining[1] {
 		t.Errorf("sort order changed after removal: got [%s, %s], want [%s, %s]",
 			filtered2[0].ID, filtered2[1].ID, remaining[0], remaining[1])
+	}
+}
+
+func TestSmartSortGroupByRepoStableAfterRemoval(t *testing.T) {
+	now := time.Now()
+	a := newTestApp()
+	a.smartSort = true
+	a.groupByRepo = true
+	a.currentUser = "alice"
+	a.notifications = []github.Notification{
+		{
+			ID:         "review-a",
+			Reason:     "review_requested",
+			UpdatedAt:  now.Add(-30 * time.Minute),
+			Subject:    github.Subject{Title: "Review A", Type: "PullRequest"},
+			Repository: github.Repository{FullName: "org/repo-a"},
+		},
+		{
+			ID:         "sub-a",
+			Reason:     "subscribed",
+			UpdatedAt:  now.Add(-10 * time.Minute), // more recent but lower score
+			Subject:    github.Subject{Title: "Sub A", Type: "PullRequest"},
+			Repository: github.Repository{FullName: "org/repo-a"},
+		},
+		{
+			ID:         "mention-b",
+			Reason:     "mention",
+			UpdatedAt:  now.Add(-1 * time.Hour),
+			Subject:    github.Subject{Title: "Mention B", Type: "Issue"},
+			Repository: github.Repository{FullName: "org/repo-b"},
+		},
+	}
+	a.detailCache = map[string]*github.ThreadDetail{
+		"review-a": {
+			State:              "open",
+			RequestedReviewers: []github.User{{Login: "alice"}},
+		},
+	}
+
+	// Get initial order
+	filtered1 := a.filteredNotifications()
+	if len(filtered1) != 3 {
+		t.Fatalf("expected 3 notifications, got %d", len(filtered1))
+	}
+	// repo-a should be first group (review_requested has highest score)
+	if filtered1[0].Repository.FullName != "org/repo-a" {
+		t.Fatalf("expected repo-a first, got %s", filtered1[0].Repository.FullName)
+	}
+
+	// Remove the high-score review notification from repo-a
+	a.removeNotification("review-a")
+
+	// repo-a should STILL appear before repo-b (stable group order)
+	filtered2 := a.filteredNotifications()
+	if len(filtered2) != 2 {
+		t.Fatalf("expected 2 notifications after removal, got %d", len(filtered2))
+	}
+	if filtered2[0].Repository.FullName != "org/repo-a" {
+		t.Errorf("repo group order changed after removal: got %s first, want org/repo-a",
+			filtered2[0].Repository.FullName)
 	}
 }
 

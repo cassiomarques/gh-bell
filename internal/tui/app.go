@@ -94,10 +94,11 @@ type App struct {
 	filterBuf      string
 
 	// Preview
-	previewScroll  int
-	detailCache    map[string]*github.ThreadDetail // cached enriched details by thread ID
-	detailLoading  string                          // thread ID currently being fetched
-	spinnerFrame   int                             // animation frame for loading spinner
+	previewScroll    int
+	detailCache      map[string]*github.ThreadDetail // cached enriched details by thread ID
+	detailFetchedAt  map[string]time.Time            // when each detail was fetched/cached
+	detailLoading    string                          // thread ID currently being fetched
+	spinnerFrame     int                             // animation frame for loading spinner
 
 	// Double-key tracking (for gg)
 	lastKey     string
@@ -135,10 +136,10 @@ type App struct {
 	groupByRepo bool // group notifications by repository
 
 	// Scoring / sort mode
-	smartSort   bool                          // true = sort by score, false = chronological
-	actionCache map[string]scoring.ActionReason // notification ID → computed action
-	scoreCache  map[string]float64             // notification ID → cached score
-	scoreDirty  bool                           // true when scores need recomputation
+	smartSort      bool                          // true = sort by score, false = chronological
+	actionCache    map[string]scoring.ActionReason // notification ID → computed action
+	scoreCache     map[string]float64             // notification ID → cached score
+	repoOrderCache map[string]int                // repo fullname → group position (for stable ordering)
 
 	// GraphQL enrichment
 	enriching bool // true while a background enrichment batch is in flight
@@ -199,12 +200,13 @@ func NewApp(client github.NotificationAPI, opts ...Option) App {
 		client:      client,
 		currentView: github.ViewUnread,
 		loading:     true,
-		detailCache: make(map[string]*github.ThreadDetail),
-		selected:    make(map[string]bool),
-		actionCache: make(map[string]scoring.ActionReason),
-		scoreCache:  make(map[string]float64),
-		scoreDirty:  true,
-		smartSort:   true, // default to smart sort
+		detailCache:     make(map[string]*github.ThreadDetail),
+		detailFetchedAt: make(map[string]time.Time),
+		selected:       make(map[string]bool),
+		actionCache:    make(map[string]scoring.ActionReason),
+		scoreCache:     make(map[string]float64),
+		repoOrderCache: make(map[string]int),
+		smartSort:      true, // default to smart sort
 	}
 	for _, opt := range opts {
 		opt(&a)
@@ -321,7 +323,7 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.loading = false
 		a.statusText = ""
 		a.statusError = false
-		a.scoreDirty = true
+		a.invalidateScores()
 		a.collectFilterOptions()
 
 		// Restore cursor to the previously selected notification
@@ -359,7 +361,7 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			log.Printf("update: cachedNotificationsLoadedMsg with %d notifications", len(msg.notifications))
 			a.notifications = msg.notifications
 			a.loading = true // still loading from API
-			a.scoreDirty = true
+			a.invalidateScores()
 			a.collectFilterOptions()
 			a.clampCursor()
 			return a, a.maybeFetchDetail()
@@ -460,7 +462,8 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case threadDetailLoadedMsg:
 		a.detailCache[msg.threadID] = msg.detail
-		a.scoreDirty = true // detail may change action classification
+		a.detailFetchedAt[msg.threadID] = time.Now()
+		a.invalidateScores() // detail may change action classification
 		if a.detailLoading == msg.threadID {
 			a.detailLoading = ""
 		}
@@ -475,7 +478,7 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case prEnrichmentMsg:
 		a.enriching = false
-		a.scoreDirty = true // enrichment data may change scores
+		a.invalidateScores() // enrichment data may change scores
 		for threadID, e := range msg.enrichments {
 			if detail, ok := a.detailCache[threadID]; ok && detail != nil {
 				detail.ReviewDecision = e.ReviewDecision
@@ -582,7 +585,7 @@ func (a App) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return a, nil
 	case "ctrl+s":
 		a.smartSort = !a.smartSort
-		a.scoreDirty = true
+		a.invalidateScores()
 		a.cursor = 0
 		a.offset = 0
 		if a.smartSort {
@@ -1920,26 +1923,24 @@ func (a App) filteredNotifications() []github.Notification {
 	}
 
 	// Smart sort: sort by priority score (highest first).
-	// Scores are cached and only recomputed when scoreDirty is set
-	// (e.g. after a refresh or sort toggle) to keep the list stable
-	// when marking items as read.
+	// Scores are cached in scoreCache (a map — writes persist even with
+	// value receivers). When invalidateScores() clears the map, scores
+	// are recomputed; otherwise cached values are reused, keeping the
+	// list stable when marking items as read.
 	if a.smartSort {
-		if a.scoreDirty {
+		needsCompute := false
+		for _, n := range result {
+			if _, ok := a.scoreCache[n.ID]; !ok {
+				needsCompute = true
+				break
+			}
+		}
+		if needsCompute {
 			now := time.Now()
 			scored := scoring.ScoreAll(result, a.detailCache, a.currentUser, now)
 			for _, s := range scored {
 				a.actionCache[s.Notification.ID] = s.Action
 				a.scoreCache[s.Notification.ID] = s.Score
-			}
-			a.scoreDirty = false
-		} else {
-			// Ensure actions are populated for any new items
-			for _, n := range result {
-				if _, ok := a.actionCache[n.ID]; !ok {
-					detail := a.detailCache[n.ID]
-					a.actionCache[n.ID] = scoring.ComputeAction(n, detail, a.currentUser)
-					a.scoreCache[n.ID] = scoring.ComputeScore(a.actionCache[n.ID], n.UpdatedAt, time.Now())
-				}
 			}
 		}
 		sort.SliceStable(result, func(i, j int) bool {
@@ -1956,23 +1957,21 @@ func (a App) filteredNotifications() []github.Notification {
 		})
 	} else {
 		// Chronological mode — still compute actions for labels but don't sort
-		if a.scoreDirty {
-			now := time.Now()
-			for _, n := range result {
+		for _, n := range result {
+			if _, ok := a.actionCache[n.ID]; !ok {
 				detail := a.detailCache[n.ID]
 				a.actionCache[n.ID] = scoring.ComputeAction(n, detail, a.currentUser)
-				a.scoreCache[n.ID] = scoring.ComputeScore(a.actionCache[n.ID], n.UpdatedAt, now)
+				a.scoreCache[n.ID] = scoring.ComputeScore(a.actionCache[n.ID], n.UpdatedAt, time.Now())
 			}
-			a.scoreDirty = false
 		}
 	}
 
 	// When group-by-repo is enabled, reorder results into repo groups.
-	// Groups are sorted by their most-recent notification; items within
-	// each group keep chronological order. This runs after filtering so
-	// grouping respects all active filters.
+	// In smart-sort mode, groups use a cached order that only changes
+	// when scores are recomputed (prevents shuffling on mark-read).
+	// In chronological mode, groups are sorted by most-recent timestamp.
 	if a.groupByRepo {
-		result = groupByRepository(result)
+		result = groupByRepository(result, a.smartSort, a.repoOrderCache)
 	}
 	return result
 }
@@ -2010,6 +2009,20 @@ func (a *App) removeNotification(threadID string) {
 	}
 	a.notifications = kept
 	a.clampCursor()
+}
+
+// invalidateScores clears all cached scores and repo ordering so they
+// are recomputed on the next filteredNotifications() call.
+func (a App) invalidateScores() {
+	for k := range a.scoreCache {
+		delete(a.scoreCache, k)
+	}
+	for k := range a.actionCache {
+		delete(a.actionCache, k)
+	}
+	for k := range a.repoOrderCache {
+		delete(a.repoOrderCache, k)
+	}
 }
 
 func (a *App) cycleReasonFilter() {
@@ -2135,7 +2148,7 @@ func ageFilterLabel(age int) string {
 // groupByRepository reorders notifications into repo groups.
 // Groups are sorted by their most-recent item (descending).
 // Items within each group retain their original order (by updated_at desc).
-func groupByRepository(notifications []github.Notification) []github.Notification {
+func groupByRepository(notifications []github.Notification, smartSort bool, repoOrderCache map[string]int) []github.Notification {
 	if len(notifications) == 0 {
 		return notifications
 	}
@@ -2162,14 +2175,44 @@ func groupByRepository(notifications []github.Notification) []github.Notificatio
 		}
 	}
 
-	// Sort groups by most-recent item descending
 	groups := make([]*repoInfo, len(order))
 	for i, repo := range order {
 		groups[i] = repoMap[repo]
 	}
-	sort.SliceStable(groups, func(i, j int) bool {
-		return groups[i].latestAt.After(groups[j].latestAt)
-	})
+
+	if smartSort {
+		// Use cached repo order if available (stable across removals).
+		// When the cache is empty (cleared by invalidateScores), rebuild
+		// from the current score-sorted input order.
+		if len(repoOrderCache) == 0 {
+			// Score-sorted input: first occurrence = highest score.
+			// Record this order in the cache.
+			for k := range repoOrderCache {
+				delete(repoOrderCache, k)
+			}
+			for i, repo := range order {
+				repoOrderCache[repo] = i
+			}
+		}
+		// Sort groups using the cached order. Repos not in the cache
+		// (shouldn't happen) go to the end.
+		sort.SliceStable(groups, func(i, j int) bool {
+			oi, okI := repoOrderCache[groups[i].repo]
+			oj, okJ := repoOrderCache[groups[j].repo]
+			if !okI {
+				oi = len(repoOrderCache)
+			}
+			if !okJ {
+				oj = len(repoOrderCache)
+			}
+			return oi < oj
+		})
+	} else {
+		// Chronological mode: sort by most-recent item descending
+		sort.SliceStable(groups, func(i, j int) bool {
+			return groups[i].latestAt.After(groups[j].latestAt)
+		})
+	}
 
 	// Flatten back
 	result := make([]github.Notification, 0, len(notifications))
@@ -2263,13 +2306,22 @@ func (a *App) maybeFetchDetail() tea.Cmd {
 	if n == nil || (a.client == nil && a.service == nil) {
 		return nil
 	}
+	// Check in-memory cache — but invalidate if notification was updated
+	// since we last fetched the detail (e.g. new comments arrived).
 	if _, ok := a.detailCache[n.ID]; ok {
-		return nil // already in memory
+		fetchedAt, hasFetchedAt := a.detailFetchedAt[n.ID]
+		if !hasFetchedAt || !n.UpdatedAt.After(fetchedAt) {
+			return nil // cached and still fresh
+		}
+		// Stale — clear in-memory cache so we re-fetch
+		delete(a.detailCache, n.ID)
+		delete(a.detailFetchedAt, n.ID)
 	}
 	// Check SQLite cache via service before hitting the API
 	if a.service != nil {
 		if detail, ok := a.service.GetCachedDetail(n.ID, n.UpdatedAt); ok {
 			a.detailCache[n.ID] = detail // promote to in-memory cache
+			a.detailFetchedAt[n.ID] = time.Now()
 			return nil
 		}
 	}
