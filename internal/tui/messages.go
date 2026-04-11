@@ -47,6 +47,11 @@ type threadUnsubscribedMsg struct {
 	threadID string
 }
 
+// threadDoneMsg is sent after dismissing a notification ("Done").
+type threadDoneMsg struct {
+	threadID string
+}
+
 // refreshTickMsg triggers a periodic re-fetch of notifications.
 type refreshTickMsg struct{}
 

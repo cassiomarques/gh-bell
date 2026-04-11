@@ -11,6 +11,7 @@ type FakeClient struct {
 
 	// Recorded calls
 	MarkedRead    []string
+	MarkedDone    []string
 	AllMarkedRead bool
 	MutedThreads  []string
 	Unsubscribed  []string
@@ -31,6 +32,11 @@ func (f *FakeClient) ListNotifications(_ ListOptions) (ListResult, error) {
 
 func (f *FakeClient) MarkThreadRead(threadID string) error {
 	f.MarkedRead = append(f.MarkedRead, threadID)
+	return nil
+}
+
+func (f *FakeClient) MarkThreadDone(threadID string) error {
+	f.MarkedDone = append(f.MarkedDone, threadID)
 	return nil
 }
 

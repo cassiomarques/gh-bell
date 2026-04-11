@@ -201,6 +201,27 @@ func unsubscribeCmd(client github.NotificationAPI, svc *service.NotificationServ
 	}
 }
 
+// markDoneCmd returns a Cmd that dismisses a notification thread ("Done").
+// This removes the notification entirely — it won't appear in any view
+// until there is new activity on the thread.
+func markDoneCmd(client github.NotificationAPI, svc *service.NotificationService, threadID string) tea.Cmd {
+	return func() tea.Msg {
+		var err error
+		if svc != nil {
+			err = svc.MarkThreadDone(threadID)
+		} else if client != nil {
+			err = client.MarkThreadDone(threadID)
+		}
+		if err != nil {
+			if github.IsAuthError(err) {
+				return errorMsg{err: authErrorMessage(err)}
+			}
+			return errorMsg{err: err}
+		}
+		return threadDoneMsg{threadID: threadID}
+	}
+}
+
 // refreshTickCmd returns a Cmd that sends a refreshTickMsg after an interval.
 func refreshTickCmd(interval time.Duration) tea.Cmd {
 	return tea.Tick(interval, func(time.Time) tea.Msg {

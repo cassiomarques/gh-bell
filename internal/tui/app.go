@@ -405,6 +405,13 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.statusError = false
 		return a, tea.Batch(clearStatusCmd(), a.maybeFetchDetail())
 
+	case threadDoneMsg:
+		a.removeNotification(msg.threadID)
+		a.previewScroll = 0
+		a.statusText = "✓ Notification dismissed"
+		a.statusError = false
+		return a, tea.Batch(clearStatusCmd(), a.maybeFetchDetail())
+
 	case visibleMarkedReadMsg:
 		for _, id := range msg.ids {
 			a.removeNotification(id)
@@ -901,6 +908,10 @@ func (a App) handleListKey(key string) (tea.Model, tea.Cmd) {
 	case "u":
 		if n := a.selectedNotification(); n != nil {
 			return a, unsubscribeCmd(a.client, a.service, n.ID)
+		}
+	case "d":
+		if n := a.selectedNotification(); n != nil {
+			return a, markDoneCmd(a.client, a.service, n.ID)
 		}
 
 	// Filters (cycling)
@@ -2485,7 +2496,7 @@ func (a App) buildHeader() string {
 		key.Render("a") + dim.Render(" age") + sep + key.Render("x") + dim.Render(" state") + sep + key.Render("p") + dim.Render(" participating"),
 		key.Render("A") + dim.Render(" assigned") + sep + key.Render("V") + dim.Render(" review:me") + sep + key.Render("Ctrl+S") + dim.Render(" sort"),
 		"",
-		key.Render("r") + dim.Render(" read") + sep + key.Render("m") + dim.Render(" mute") + sep + key.Render("Space") + dim.Render(" select"),
+		key.Render("r") + dim.Render(" read") + sep + key.Render("d") + dim.Render(" done") + sep + key.Render("m") + dim.Render(" mute") + sep + key.Render("Space") + dim.Render(" select"),
 		key.Render("?") + dim.Render(" full help") + sep + key.Render("1/2/3") + dim.Render(" views") + sep + key.Render("q") + dim.Render(" quit"),
 	}
 	help := strings.Join(helpLines, "\n")
@@ -2545,6 +2556,8 @@ func (a App) renderHelpOverlay() string {
 	b.WriteString(line("M", "Mute all visible"))
 	b.WriteByte('\n')
 	b.WriteString(line("u", "Unsubscribe"))
+	b.WriteByte('\n')
+	b.WriteString(line("d", "Done (dismiss notification)"))
 	b.WriteByte('\n')
 	b.WriteByte('\n')
 

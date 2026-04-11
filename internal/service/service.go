@@ -340,6 +340,17 @@ func (s *NotificationService) MarkThreadRead(threadID string) error {
 	return nil
 }
 
+// MarkThreadDone dismisses a notification via the API and removes it from the local cache.
+func (s *NotificationService) MarkThreadDone(threadID string) error {
+	if err := s.client.MarkThreadDone(threadID); err != nil {
+		return err
+	}
+	if storeErr := s.store.DeleteNotification(threadID); storeErr != nil {
+		log.Printf("warning: failed to delete cached notification for done %s: %v", threadID, storeErr)
+	}
+	return nil
+}
+
 // MarkAllRead marks all notifications as read via the API and updates the cache.
 func (s *NotificationService) MarkAllRead(upTo *time.Time) error {
 	if err := s.client.MarkAllRead(upTo); err != nil {

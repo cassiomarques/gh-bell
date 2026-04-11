@@ -17,6 +17,7 @@ import (
 type NotificationAPI interface {
 	ListNotifications(opts ListOptions) (ListResult, error)
 	MarkThreadRead(threadID string) error
+	MarkThreadDone(threadID string) error
 	MarkAllRead(upTo *time.Time) error
 	MuteThread(threadID string) error
 	UnsubscribeThread(threadID string) error
@@ -212,6 +213,19 @@ func jsonBody(v any) (*bytes.Reader, error) {
 		return nil, fmt.Errorf("encoding request body: %w", err)
 	}
 	return bytes.NewReader(b), nil
+}
+
+// MarkThreadDone dismisses a notification thread ("Done" in GitHub's UI).
+// Unlike MarkThreadRead which only dims the notification, this removes it
+// from the notification list entirely. A new notification is created if
+// there is new activity on the thread later.
+func (c *Client) MarkThreadDone(threadID string) error {
+	endpoint := fmt.Sprintf("notifications/threads/%s", threadID)
+	err := c.rest.Delete(endpoint, nil)
+	if err != nil {
+		return fmt.Errorf("marking thread %s as done: %w", threadID, err)
+	}
+	return nil
 }
 
 // UnsubscribeThread removes the user's subscription from a thread.

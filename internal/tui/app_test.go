@@ -1137,6 +1137,29 @@ func TestPreviewUpdatesAfterUnsubscribe(t *testing.T) {
 	}
 }
 
+func TestPreviewUpdatesAfterDone(t *testing.T) {
+	a := newTestApp()
+	a.detailCache = make(map[string]*github.ThreadDetail)
+	a.cursor = 0
+
+	result, cmd := a.Update(threadDoneMsg{threadID: "1"})
+	updated := result.(App)
+
+	sel := updated.selectedNotification()
+	if sel != nil && sel.ID == "1" {
+		t.Error("dismissed notification should not be selected")
+	}
+	if updated.previewScroll != 0 {
+		t.Error("previewScroll should be reset after done")
+	}
+	if updated.statusText != "✓ Notification dismissed" {
+		t.Errorf("status should say dismissed, got: %s", updated.statusText)
+	}
+	if cmd == nil {
+		t.Error("should return a cmd batch after done")
+	}
+}
+
 func TestPreviewPaneActionsDelegate(t *testing.T) {
 a := newTestApp()
 a.detailCache = make(map[string]*github.ThreadDetail)
