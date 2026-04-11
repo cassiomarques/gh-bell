@@ -430,6 +430,15 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.statusError = false
 		return a, tea.Batch(clearStatusCmd(), a.maybeFetchDetail())
 
+	case batchDoneMsg:
+		for _, id := range msg.ids {
+			a.removeNotification(id)
+		}
+		a.previewScroll = 0
+		a.statusText = fmt.Sprintf("✓ Dismissed %d notifications", msg.count)
+		a.statusError = false
+		return a, tea.Batch(clearStatusCmd(), a.maybeFetchDetail())
+
 	case cleanupDoneMsg:
 		if msg.purged > 0 {
 			a.statusText = fmt.Sprintf("Cleaned up %d old entries", msg.purged)
@@ -910,6 +919,14 @@ func (a App) handleListKey(key string) (tea.Model, tea.Cmd) {
 			return a, unsubscribeCmd(a.client, a.service, n.ID)
 		}
 	case "d":
+		// If items are selected, dismiss them all; otherwise dismiss cursor item
+		if len(a.selected) > 0 {
+			sel := a.selectedNotifications()
+			a.statusText = fmt.Sprintf("Dismissing %d…", len(sel))
+			a.statusError = false
+			a.selected = make(map[string]bool)
+			return a, batchDoneCmd(a.client, a.service, sel)
+		}
 		if n := a.selectedNotification(); n != nil {
 			return a, markDoneCmd(a.client, a.service, n.ID)
 		}

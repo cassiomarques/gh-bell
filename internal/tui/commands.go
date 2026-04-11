@@ -375,6 +375,32 @@ func muteVisibleCmd(client github.NotificationAPI, svc *service.NotificationServ
 	}
 }
 
+// batchDoneCmd dismisses a batch of notifications one by one.
+// Used by the d keybinding when items are multi-selected.
+func batchDoneCmd(client github.NotificationAPI, svc *service.NotificationService, notifications []github.Notification) tea.Cmd {
+	return func() tea.Msg {
+		var ids []string
+		for _, n := range notifications {
+			var err error
+			if svc != nil {
+				err = svc.MarkThreadDone(n.ID)
+			} else if client != nil {
+				err = client.MarkThreadDone(n.ID)
+			}
+			if err != nil {
+				log.Printf("batch done: error on %s: %v", n.ID, err)
+				if github.IsAuthError(err) {
+					return errorMsg{err: authErrorMessage(err)}
+				}
+				continue
+			}
+			ids = append(ids, n.ID)
+		}
+		log.Printf("batch done: dismissed %d/%d", len(ids), len(notifications))
+		return batchDoneMsg{count: len(ids), ids: ids}
+	}
+}
+
 // cleanupCmd runs age-based cleanup of old read notifications on startup.
 func cleanupCmd(svc *service.NotificationService, days int) tea.Cmd {
 	return func() tea.Msg {

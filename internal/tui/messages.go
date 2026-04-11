@@ -98,6 +98,12 @@ type visibleMutedMsg struct {
 	ids   []string
 }
 
+// batchDoneMsg is sent after batch-dismissing notifications.
+type batchDoneMsg struct {
+	count int
+	ids   []string
+}
+
 // cleanupDoneMsg is sent after auto-cleanup of old notifications completes.
 type cleanupDoneMsg struct {
 	purged int
