@@ -3,9 +3,36 @@ package tui
 import (
 	"regexp"
 	"strings"
+	"sync"
 
 	glamour "charm.land/glamour/v2"
 )
+
+// glamourCache caches glamour renderers by word-wrap width to avoid
+// re-creating them on every call. Creating a new TermRenderer involves
+// parsing style JSON and building template objects — expensive when
+// called multiple times per frame.
+var (
+	glamourRenderers = make(map[int]*glamour.TermRenderer)
+	glamourMu        sync.Mutex
+)
+
+func getGlamourRenderer(width int) (*glamour.TermRenderer, error) {
+	glamourMu.Lock()
+	defer glamourMu.Unlock()
+	if r, ok := glamourRenderers[width]; ok {
+		return r, nil
+	}
+	r, err := glamour.NewTermRenderer(
+		glamour.WithStandardStyle("dark"),
+		glamour.WithWordWrap(width),
+	)
+	if err != nil {
+		return nil, err
+	}
+	glamourRenderers[width] = r
+	return r, nil
+}
 
 // renderMarkdown converts a markdown/HTML string into styled terminal output
 // using glamour. Falls back to plain text if rendering fails.
@@ -23,10 +50,7 @@ func renderMarkdown(content string, width int) string {
 		renderWidth = 10
 	}
 
-	renderer, err := glamour.NewTermRenderer(
-		glamour.WithStandardStyle("dark"),
-		glamour.WithWordWrap(renderWidth),
-	)
+	renderer, err := getGlamourRenderer(renderWidth)
 	if err != nil {
 		return wordWrap2(processed, width)
 	}

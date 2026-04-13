@@ -100,6 +100,12 @@ type App struct {
 	detailLoading    string                          // thread ID currently being fetched
 	spinnerFrame     int                             // animation frame for loading spinner
 
+	// Preview render cache — avoids re-running glamour on every scroll keypress.
+	// Uses a map (reference type) so it persists across value-receiver copies.
+	// Key format: "threadID:width:hasDetail" → rendered lines.
+	// Invalidated when selection changes, detail loads, or window resizes.
+	previewRenderCache map[string][]string
+
 	// Double-key tracking (for gg)
 	lastKey     string
 	lastKeyTime time.Time
@@ -200,9 +206,10 @@ func NewApp(client github.NotificationAPI, opts ...Option) App {
 		client:      client,
 		currentView: github.ViewUnread,
 		loading:     true,
-		detailCache:     make(map[string]*github.ThreadDetail),
-		detailFetchedAt: make(map[string]time.Time),
-		selected:       make(map[string]bool),
+		detailCache:        make(map[string]*github.ThreadDetail),
+		detailFetchedAt:    make(map[string]time.Time),
+		previewRenderCache: make(map[string][]string),
+		selected:           make(map[string]bool),
 		actionCache:    make(map[string]scoring.ActionReason),
 		scoreCache:     make(map[string]float64),
 		repoOrderCache: make(map[string]int),
@@ -1192,13 +1199,51 @@ func (a App) renderMainContent(notifications []github.Notification, height int) 
 }
 
 // previewContentLines builds the raw content lines for the preview pane.
-// Extracted as a pure function so both key handlers and View can use it.
+// Results are cached in a map (reference type that persists across value-
+// receiver copies) to avoid re-running glamour on every scroll keypress.
 func (a App) previewContentLines(width int) []string {
 	n := a.selectedNotification()
 	if n == nil {
 		return nil
 	}
 
+	// Build cache key: threadID + width + whether detail is loaded + focus state
+	_, hasDetail := a.detailCache[n.ID]
+	detailFlag := "0"
+	if hasDetail {
+		detailFlag = "1"
+	}
+	focusFlag := "0"
+	if a.focused == focusPreview {
+		focusFlag = "1"
+	}
+	cacheKey := n.ID + ":" + fmt.Sprintf("%d", width) + ":" + detailFlag + ":" + focusFlag
+
+	// Don't use cache while spinner is animating (frame changes each tick)
+	isLoading := a.detailLoading == n.ID
+
+	if !isLoading {
+		if cached, ok := a.previewRenderCache[cacheKey]; ok {
+			return cached
+		}
+	}
+
+	lines := a.buildPreviewLines(n, width)
+
+	// Store in cache (skip during loading since spinner frames change).
+	// Clear first to avoid unbounded growth — only one entry needed.
+	if !isLoading {
+		for k := range a.previewRenderCache {
+			delete(a.previewRenderCache, k)
+		}
+		a.previewRenderCache[cacheKey] = lines
+	}
+
+	return lines
+}
+
+// buildPreviewLines does the actual (expensive) work of rendering preview content.
+func (a App) buildPreviewLines(n *github.Notification, width int) []string {
 	var lines []string
 
 	// Title
