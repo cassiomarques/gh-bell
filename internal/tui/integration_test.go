@@ -357,14 +357,14 @@ func TestIntegration_ViewPreferencePersists(t *testing.T) {
 		t.Fatalf("expected ViewAll restored, got %d", app2.currentView)
 	}
 
-	// Switch to Participating
-	a2, _ := app2.switchView(github.ViewParticipating)
+	// Switch back to Unread
+	a2, _ := app2.switchView(github.ViewUnread)
 	_ = a2
 
-	// Session 3: should restore Participating
+	// Session 3: should restore Unread
 	app3 := NewApp(stack.fake, WithService(stack.service))
-	if app3.currentView != github.ViewParticipating {
-		t.Fatalf("expected ViewParticipating restored, got %d", app3.currentView)
+	if app3.currentView != github.ViewUnread {
+		t.Fatalf("expected ViewUnread restored, got %d", app3.currentView)
 	}
 }
 

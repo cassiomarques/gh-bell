@@ -65,7 +65,7 @@ Environment variables `GH_BELL_TOKEN`, `GH_BELL_REFRESH`, `GH_BELL_CLEANUP_DAYS`
 ## Features
 
 - **Vim-style navigation** — `j`/`k`, `gg`/`G` in both list and preview pane
-- **Three views** — Unread (`1`), All (`2`), Participating (`3`)
+- **Two views** — Unread (`1`), All (`2`)
 - **Rich filtering** — repo (`/`), title search (`s`), reason (`f`), type (`t`), org (`o`), age (`a`), state (`x`), participating (`p`) — all combinable
 - **Full-text search** — `S` searches notification titles, bodies, comments, labels, and more using [Bleve](https://blevesearch.com/)
 - **Actions** — `r` mark read, `R` mark all visible, `m` mute, `M` mute all visible, `u` unsubscribe
@@ -119,7 +119,7 @@ Environment variables `GH_BELL_TOKEN`, `GH_BELL_REFRESH`, `GH_BELL_CLEANUP_DAYS`
 
 | Key | Action |
 |-----|--------|
-| `1` / `2` / `3` | Unread / All / Participating view |
+| `1` / `2` | Unread / All view |
 | `/` | Filter by repo (live search) |
 | `s` | Search titles (live search) |
 | `S` | Full-text search (bodies, comments, labels) |

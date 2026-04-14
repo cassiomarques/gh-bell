@@ -221,7 +221,7 @@ func NewApp(client github.NotificationAPI, opts ...Option) App {
 	// Restore last view from preferences if persistence is available
 	if a.service != nil {
 		if v := a.service.GetPref("last_view"); v != "" {
-			if n, err := strconv.Atoi(v); err == nil && n >= 0 && n <= 2 {
+			if n, err := strconv.Atoi(v); err == nil && n >= 0 && n <= 1 {
 				a.currentView = github.View(n)
 			}
 		}
@@ -583,8 +583,6 @@ func (a App) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return a.switchView(github.ViewUnread)
 	case "2":
 		return a.switchView(github.ViewAll)
-	case "3":
-		return a.switchView(github.ViewParticipating)
 	case "tab":
 		if a.focused == focusList {
 			a.focused = focusPreview
@@ -1080,7 +1078,6 @@ func (a App) renderTabs() string {
 	}{
 		{"Unread", github.ViewUnread, "1"},
 		{"All", github.ViewAll, "2"},
-		{"Participating", github.ViewParticipating, "3"},
 	}
 
 	var tabs []string
@@ -2559,7 +2556,7 @@ func (a App) buildHeader() string {
 		key.Render("A") + dim.Render(" assigned") + sep + key.Render("V") + dim.Render(" review:me") + sep + key.Render("Ctrl+S") + dim.Render(" sort"),
 		"",
 		key.Render("r") + dim.Render(" read") + sep + key.Render("d") + dim.Render(" done") + sep + key.Render("m") + dim.Render(" mute") + sep + key.Render("Space") + dim.Render(" select"),
-		key.Render("?") + dim.Render(" full help") + sep + key.Render("1/2/3") + dim.Render(" views") + sep + key.Render("q") + dim.Render(" quit"),
+		key.Render("?") + dim.Render(" full help") + sep + key.Render("1/2") + dim.Render(" views") + sep + key.Render("q") + dim.Render(" quit"),
 	}
 	help := strings.Join(helpLines, "\n")
 
@@ -2625,7 +2622,7 @@ func (a App) renderHelpOverlay() string {
 
 	b.WriteString(heading.Render("Filters & Views"))
 	b.WriteByte('\n')
-	b.WriteString(line("1/2/3", "Unread/All/Participating"))
+	b.WriteString(line("1/2", "Unread/All"))
 	b.WriteByte('\n')
 	b.WriteString(line("/", "Filter by repo"))
 	b.WriteByte('\n')
