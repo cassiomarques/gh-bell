@@ -54,6 +54,7 @@ func newTestApp() App {
 		actionCache:    make(map[string]scoring.ActionReason),
 		scoreCache:     make(map[string]float64),
 		repoOrderCache: make(map[string]int),
+		previewCommentFirst: true,
 	}
 	a.notifications = sampleNotifications()
 	a.collectFilterOptions()
@@ -1034,6 +1035,66 @@ func TestPreviewCommentNotTruncated(t *testing.T) {
 	}
 	if !strings.Contains(preview, "Comment paragraph 15") {
 		t.Error("preview should contain last paragraph of comment (no truncation)")
+	}
+}
+
+func TestPreviewCommentFirstOrdering(t *testing.T) {
+	a := newTestApp()
+	detail := &github.ThreadDetail{
+		State: "open",
+		Body:  "PR description body text",
+		User:  github.User{Login: "author"},
+		LatestComment: &github.Comment{
+			Body:      "Latest review comment text",
+			User:      github.User{Login: "reviewer"},
+			CreatedAt: time.Now(),
+		},
+	}
+	a.detailCache = map[string]*github.ThreadDetail{"1": detail}
+
+	// With comment-first (default)
+	a.previewCommentFirst = true
+	preview := a.renderPreview(80, 60)
+	commentIdx := strings.Index(preview, "Comment by")
+	descIdx := strings.Index(preview, "Description")
+	if commentIdx < 0 || descIdx < 0 {
+		t.Fatal("preview should contain both Comment and Description sections")
+	}
+	if commentIdx > descIdx {
+		t.Error("with previewCommentFirst=true, Comment should appear before Description")
+	}
+
+	// With description-first
+	a.previewCommentFirst = false
+	a.previewRenderCache = make(map[string][]string) // clear cache
+	preview = a.renderPreview(80, 60)
+	commentIdx = strings.Index(preview, "Comment by")
+	descIdx = strings.Index(preview, "Description")
+	if commentIdx < 0 || descIdx < 0 {
+		t.Fatal("preview should contain both Comment and Description sections")
+	}
+	if descIdx > commentIdx {
+		t.Error("with previewCommentFirst=false, Description should appear before Comment")
+	}
+}
+
+func TestPreviewCommentFirst_NoComment_DescriptionAlwaysShown(t *testing.T) {
+	a := newTestApp()
+	a.previewCommentFirst = true
+	a.detailCache = map[string]*github.ThreadDetail{
+		"1": {
+			State: "open",
+			Body:  "Just a description",
+			User:  github.User{Login: "author"},
+		},
+	}
+
+	preview := a.renderPreview(80, 60)
+	if !strings.Contains(preview, "Description") {
+		t.Error("description should always be shown when there is no comment")
+	}
+	if strings.Contains(preview, "Comment by") {
+		t.Error("comment section should not appear when there is no comment")
 	}
 }
 

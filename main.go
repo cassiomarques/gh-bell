@@ -139,6 +139,14 @@ func main() {
 		log.Printf("sort mode: smart")
 	}
 
+	// Pass preview comment-first config (default is true)
+	if cfg.PreviewCommentFirst != nil && !*cfg.PreviewCommentFirst {
+		opts = append(opts, tui.WithPreviewCommentFirst(false))
+		log.Printf("preview: description first")
+	} else {
+		log.Printf("preview: comment first (default)")
+	}
+
 	app := tui.NewApp(client, opts...)
 	p := tea.NewProgram(app)
 

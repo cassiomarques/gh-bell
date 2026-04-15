@@ -150,6 +150,9 @@ type App struct {
 	// GraphQL enrichment
 	enriching bool // true while a background enrichment batch is in flight
 
+	// Preview pane content ordering
+	previewCommentFirst bool // show latest comment before description (default: true)
+
 	// Header cache (rebuilt on resize)
 	headerCache string
 }
@@ -200,6 +203,14 @@ func WithSmartSort(enabled bool) Option {
 	}
 }
 
+// WithPreviewCommentFirst controls whether the latest comment is shown before
+// the description in the preview pane. Default is true.
+func WithPreviewCommentFirst(enabled bool) Option {
+	return func(a *App) {
+		a.previewCommentFirst = enabled
+	}
+}
+
 // NewApp creates an App wired to the given GitHub API client.
 func NewApp(client github.NotificationAPI, opts ...Option) App {
 	a := App{
@@ -213,7 +224,8 @@ func NewApp(client github.NotificationAPI, opts ...Option) App {
 		actionCache:    make(map[string]scoring.ActionReason),
 		scoreCache:     make(map[string]float64),
 		repoOrderCache: make(map[string]int),
-		smartSort:      true, // default to smart sort
+		smartSort:           true, // default to smart sort
+		previewCommentFirst: true, // default to showing comment before description
 	}
 	for _, opt := range opts {
 		opt(&a)
@@ -1468,32 +1480,47 @@ func (a App) renderEnrichedDetail(lines []string, detail *github.ThreadDetail, s
 		lines = append(lines, dim.Render("  Tag:     ")+val.Render(detail.TagName))
 	}
 
-	// Body — rendered as markdown for rich formatting.
-	// For PRs/issues with no comments, the body is the primary content.
-	if detail.Body != "" {
-		lines = append(lines, "")
-		lines = append(lines, dim.Render("  ─── Description ───"))
-		rendered := renderMarkdown(detail.Body, bodyWidth)
-		for _, bl := range strings.Split(rendered, "\n") {
-			lines = append(lines, "  "+bl)
+	// Build description and comment blocks, then order based on config.
+	// When previewCommentFirst is true (default), the latest comment appears
+	// before the description — putting the content that triggered the
+	// notification at the top of the preview, minimising scrolling.
+	hasComment := detail.LatestComment != nil && detail.LatestComment.Body != ""
+
+	renderDescription := func() {
+		if detail.Body != "" {
+			lines = append(lines, "")
+			lines = append(lines, dim.Render("  ─── Description ───"))
+			rendered := renderMarkdown(detail.Body, bodyWidth)
+			for _, bl := range strings.Split(rendered, "\n") {
+				lines = append(lines, "  "+bl)
+			}
+		} else if subjectType == "PullRequest" || subjectType == "Issue" {
+			lines = append(lines, "")
+			lines = append(lines, dim.Render("  ─── Description ───"))
+			lines = append(lines, dim.Render("  (No description provided)"))
 		}
-	} else if subjectType == "PullRequest" || subjectType == "Issue" {
-		lines = append(lines, "")
-		lines = append(lines, dim.Render("  ─── Description ───"))
-		lines = append(lines, dim.Render("  (No description provided)"))
 	}
 
-	// Latest comment — rendered as markdown
-	if detail.LatestComment != nil && detail.LatestComment.Body != "" {
-		c := detail.LatestComment
-		lines = append(lines, "")
-		commentHeader := fmt.Sprintf("  ─── Comment by @%s (%s) ───",
-			c.User.Login, c.CreatedAt.Local().Format("Jan 02, 15:04"))
-		lines = append(lines, dim.Render(commentHeader))
-		rendered := renderMarkdown(c.Body, bodyWidth)
-		for _, cl := range strings.Split(rendered, "\n") {
-			lines = append(lines, "  "+cl)
+	renderComment := func() {
+		if hasComment {
+			c := detail.LatestComment
+			lines = append(lines, "")
+			commentHeader := fmt.Sprintf("  ─── Comment by @%s (%s) ───",
+				c.User.Login, c.CreatedAt.Local().Format("Jan 02, 15:04"))
+			lines = append(lines, dim.Render(commentHeader))
+			rendered := renderMarkdown(c.Body, bodyWidth)
+			for _, cl := range strings.Split(rendered, "\n") {
+				lines = append(lines, "  "+cl)
+			}
 		}
+	}
+
+	if a.previewCommentFirst && hasComment {
+		renderComment()
+		renderDescription()
+	} else {
+		renderDescription()
+		renderComment()
 	}
 
 	return lines

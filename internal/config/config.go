@@ -35,15 +35,21 @@ token: ""
 # Sort mode: "smart" (priority score) or "chronological" (updated_at).
 # Smart mode surfaces actionable items first using exponential time decay.
 # sort_mode: smart
+
+# Preview order: when true (default), show the latest comment before the
+# description in the preview pane. This puts the most relevant content
+# (what triggered the notification) at the top.
+# preview_comment_first: true
 `
 
 // Config holds all gh-bell configuration.
 type Config struct {
-	Token           string `yaml:"token"`
-	RefreshInterval int    `yaml:"refresh_interval,omitempty"`
-	CleanupDays     int    `yaml:"cleanup_days,omitempty"`
-	GroupByRepo     bool   `yaml:"group_by_repo,omitempty"`
-	SortMode        string `yaml:"sort_mode,omitempty"` // "smart" or "chronological"
+	Token               string `yaml:"token"`
+	RefreshInterval     int    `yaml:"refresh_interval,omitempty"`
+	CleanupDays         int    `yaml:"cleanup_days,omitempty"`
+	GroupByRepo         bool   `yaml:"group_by_repo,omitempty"`
+	SortMode            string `yaml:"sort_mode,omitempty"`            // "smart" or "chronological"
+	PreviewCommentFirst *bool  `yaml:"preview_comment_first,omitempty"` // show latest comment before description (default: true)
 }
 
 // Dir returns the gh-bell data/config directory (~/.gh-bell/).
@@ -131,6 +137,10 @@ func applyEnvOverrides(cfg *Config) {
 	}
 	if s := os.Getenv("GH_BELL_SORT_MODE"); s != "" {
 		cfg.SortMode = s
+	}
+	if s := os.Getenv("GH_BELL_PREVIEW_COMMENT_FIRST"); s != "" {
+		v := s == "1" || s == "true"
+		cfg.PreviewCommentFirst = &v
 	}
 }
 

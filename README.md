@@ -58,9 +58,14 @@ cleanup_days: 15
 # Smart sort ranks notifications by actionability — items needing your attention
 # float to the top, while informational items sink.
 # sort_mode: smart
+
+# Preview pane content order: when true (default), the latest comment appears
+# before the description — putting the content that triggered the notification
+# at the top of the preview, minimising scrolling. Set to false for description-first.
+# preview_comment_first: true
 ```
 
-Environment variables `GH_BELL_TOKEN`, `GH_BELL_REFRESH`, `GH_BELL_CLEANUP_DAYS`, `GH_BELL_GROUP_BY_REPO`, and `GH_BELL_SORT_MODE` still work and **override** the config file (useful for CI or one-off runs).
+Environment variables `GH_BELL_TOKEN`, `GH_BELL_REFRESH`, `GH_BELL_CLEANUP_DAYS`, `GH_BELL_GROUP_BY_REPO`, `GH_BELL_SORT_MODE`, and `GH_BELL_PREVIEW_COMMENT_FIRST` still work and **override** the config file (useful for CI or one-off runs).
 
 ## Features
 
@@ -88,6 +93,7 @@ Environment variables `GH_BELL_TOKEN`, `GH_BELL_REFRESH`, `GH_BELL_CLEANUP_DAYS`
 - **Action labels** — when smart sort is active, the reason column shows computed action labels (e.g., "Review req.", "CI failed", "Approved") with color coding: red for urgent, yellow for attention needed, green for positive, dim for informational
 - **Review-requested filter** — `V` filters to notifications where your review was explicitly requested
 - **GraphQL enrichment** — automatically fetches PR review decision, CI status, and merge conflicts via GitHub's GraphQL API. Data is displayed in the preview pane and improves smart sort accuracy. Enrichment runs in the background and results are persisted in SQLite
+- **Comment-first preview** — when a notification has a latest comment, it appears above the description in the preview pane (configurable via `preview_comment_first` in config)
 
 ## Keybindings
 
