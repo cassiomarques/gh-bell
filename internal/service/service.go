@@ -181,7 +181,14 @@ func (s *NotificationService) refreshIncremental(view github.View) ([]github.Not
 		return s.refreshFull(view)
 	}
 
-	log.Printf("sync: incremental fetch since %s", since.Format("2006-01-02T15:04:05Z"))
+	// Subtract 1 second because GitHub's `since` parameter is strict ">"
+	// (exclusive). Without this buffer, a notification whose updated_at
+	// equals the latest cached timestamp would be silently skipped forever.
+	// Re-fetching an already-cached notification is harmless (upsert).
+	buffered := since.Add(-1 * time.Second)
+
+	log.Printf("sync: incremental fetch since %s (buffered -1s from %s)",
+		buffered.Format("2006-01-02T15:04:05Z"), since.Format("2006-01-02T15:04:05Z"))
 	var total int
 	page := 1
 	for {
@@ -189,7 +196,7 @@ func (s *NotificationService) refreshIncremental(view github.View) ([]github.Not
 			View:    view,
 			PerPage: maxPerPage,
 			Page:    page,
-			Since:   since,
+			Since:   &buffered,
 		}
 		result, err := s.client.ListNotifications(opts)
 		if err != nil {

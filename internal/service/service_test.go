@@ -408,6 +408,16 @@ func TestSmartRefresh_Incremental(t *testing.T) {
 	if fake.callLog[0].Since == nil {
 		t.Error("expected Since parameter to be set for incremental refresh")
 	}
+
+	// The since value should be 1 second before the latest cached timestamp
+	// to account for GitHub's exclusive (strict >) since semantics.
+	latestCached := time.Date(2025, 1, 10, 0, 0, 0, 0, time.UTC)
+	expected := latestCached.Add(-1 * time.Second)
+	actual := *fake.callLog[0].Since
+	if !actual.Equal(expected) {
+		t.Errorf("since should be buffered -1s: got %s, want %s",
+			actual.Format(time.RFC3339), expected.Format(time.RFC3339))
+	}
 }
 
 func TestForceFullSync_ClearsFlagAndRefetches(t *testing.T) {
