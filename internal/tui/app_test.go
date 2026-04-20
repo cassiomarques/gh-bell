@@ -2487,6 +2487,56 @@ func TestGroupByRepo_SingleRepo(t *testing.T) {
 	}
 }
 
+func TestGroupByRepo_PinnedRepos(t *testing.T) {
+	// Pinned repos should always appear at the top in config order,
+	// regardless of recency.
+	now := time.Now()
+	a := newTestApp()
+	a.groupByRepo = true
+	a.pinnedRepos = []string{"org/repo-c", "org/repo-a"}
+	a.notifications = []github.Notification{
+		{ID: "b1", UpdatedAt: now.Add(-30 * time.Minute), Repository: github.Repository{FullName: "org/repo-b"}},
+		{ID: "a1", UpdatedAt: now.Add(-1 * time.Hour), Repository: github.Repository{FullName: "org/repo-a"}},
+		{ID: "c1", UpdatedAt: now.Add(-2 * time.Hour), Repository: github.Repository{FullName: "org/repo-c"}},
+		{ID: "b2", UpdatedAt: now.Add(-3 * time.Hour), Repository: github.Repository{FullName: "org/repo-b"}},
+		{ID: "a2", UpdatedAt: now.Add(-5 * time.Hour), Repository: github.Repository{FullName: "org/repo-a"}},
+	}
+
+	filtered := a.filteredNotifications()
+	if len(filtered) != 5 {
+		t.Fatalf("expected 5 notifications, got %d", len(filtered))
+	}
+
+	// Expected: pinned first (repo-c, repo-a in config order), then repo-b
+	expectedIDs := []string{"c1", "a1", "a2", "b1", "b2"}
+	for i, n := range filtered {
+		if n.ID != expectedIDs[i] {
+			t.Errorf("position %d: expected ID %s, got %s", i, expectedIDs[i], n.ID)
+		}
+	}
+}
+
+func TestGroupByRepo_PinnedRepos_NoPinnedPresent(t *testing.T) {
+	// When pinned repos have no notifications, ordering falls back to normal.
+	now := time.Now()
+	a := newTestApp()
+	a.groupByRepo = true
+	a.pinnedRepos = []string{"org/no-notifications"}
+	a.notifications = []github.Notification{
+		{ID: "b1", UpdatedAt: now.Add(-30 * time.Minute), Repository: github.Repository{FullName: "org/repo-b"}},
+		{ID: "a1", UpdatedAt: now.Add(-1 * time.Hour), Repository: github.Repository{FullName: "org/repo-a"}},
+	}
+
+	filtered := a.filteredNotifications()
+	if len(filtered) != 2 {
+		t.Fatalf("expected 2, got %d", len(filtered))
+	}
+	// repo-b is more recent, should come first
+	if filtered[0].ID != "b1" {
+		t.Errorf("expected b1 first, got %s", filtered[0].ID)
+	}
+}
+
 // --- Scroll and cursor regression tests ---
 // These lock down scroll/offset/cursor behavior that the collapsible
 // groups refactor would touch.

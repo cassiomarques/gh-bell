@@ -40,6 +40,12 @@ token: ""
 # description in the preview pane. This puts the most relevant content
 # (what triggered the notification) at the top.
 # preview_comment_first: true
+
+# Pinned repositories: these repos always appear at the top of the list
+# (when group_by_repo is enabled) in the order listed here.
+# pinned_repos:
+#   - owner/repo-name
+#   - owner/another-repo
 `
 
 // Config holds all gh-bell configuration.
@@ -49,7 +55,8 @@ type Config struct {
 	CleanupDays         int    `yaml:"cleanup_days,omitempty"`
 	GroupByRepo         bool   `yaml:"group_by_repo,omitempty"`
 	SortMode            string `yaml:"sort_mode,omitempty"`            // "smart" or "chronological"
-	PreviewCommentFirst *bool  `yaml:"preview_comment_first,omitempty"` // show latest comment before description (default: true)
+	PreviewCommentFirst *bool    `yaml:"preview_comment_first,omitempty"` // show latest comment before description (default: true)
+	PinnedRepos         []string `yaml:"pinned_repos,omitempty"`          // repos pinned to top of grouped list
 }
 
 // Dir returns the gh-bell data/config directory (~/.gh-bell/).

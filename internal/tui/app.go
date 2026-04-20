@@ -153,6 +153,9 @@ type App struct {
 	// Preview pane content ordering
 	previewCommentFirst bool // show latest comment before description (default: true)
 
+	// Pinned repos (always shown at top when groupByRepo is enabled)
+	pinnedRepos []string
+
 	// Header cache (rebuilt on resize)
 	headerCache string
 }
@@ -208,6 +211,13 @@ func WithSmartSort(enabled bool) Option {
 func WithPreviewCommentFirst(enabled bool) Option {
 	return func(a *App) {
 		a.previewCommentFirst = enabled
+	}
+}
+
+// WithPinnedRepos sets repos that always appear at the top of the grouped list.
+func WithPinnedRepos(repos []string) Option {
+	return func(a *App) {
+		a.pinnedRepos = repos
 	}
 }
 
@@ -2075,7 +2085,7 @@ func (a App) filteredNotifications() []github.Notification {
 	// when scores are recomputed (prevents shuffling on mark-read).
 	// In chronological mode, groups are sorted by most-recent timestamp.
 	if a.groupByRepo {
-		result = groupByRepository(result, a.smartSort, a.repoOrderCache)
+		result = groupByRepository(result, a.smartSort, a.repoOrderCache, a.pinnedRepos)
 	}
 	return result
 }
@@ -2252,9 +2262,15 @@ func ageFilterLabel(age int) string {
 // groupByRepository reorders notifications into repo groups.
 // Groups are sorted by their most-recent item (descending).
 // Items within each group retain their original order (by updated_at desc).
-func groupByRepository(notifications []github.Notification, smartSort bool, repoOrderCache map[string]int) []github.Notification {
+func groupByRepository(notifications []github.Notification, smartSort bool, repoOrderCache map[string]int, pinnedRepos []string) []github.Notification {
 	if len(notifications) == 0 {
 		return notifications
+	}
+
+	// Build a set for O(1) pinned lookups and an index for ordering
+	pinnedSet := make(map[string]int, len(pinnedRepos))
+	for i, r := range pinnedRepos {
+		pinnedSet[r] = i
 	}
 
 	// Collect items per repo, preserving insertion order
@@ -2284,13 +2300,24 @@ func groupByRepository(notifications []github.Notification, smartSort bool, repo
 		groups[i] = repoMap[repo]
 	}
 
+	// Partition into pinned and unpinned groups
+	var pinned, unpinned []*repoInfo
+	for _, g := range groups {
+		if _, ok := pinnedSet[g.repo]; ok {
+			pinned = append(pinned, g)
+		} else {
+			unpinned = append(unpinned, g)
+		}
+	}
+
+	// Sort pinned groups by their config order
+	sort.SliceStable(pinned, func(i, j int) bool {
+		return pinnedSet[pinned[i].repo] < pinnedSet[pinned[j].repo]
+	})
+
+	// Sort unpinned groups by score cache or chronology
 	if smartSort {
-		// Use cached repo order if available (stable across removals).
-		// When the cache is empty (cleared by invalidateScores), rebuild
-		// from the current score-sorted input order.
 		if len(repoOrderCache) == 0 {
-			// Score-sorted input: first occurrence = highest score.
-			// Record this order in the cache.
 			for k := range repoOrderCache {
 				delete(repoOrderCache, k)
 			}
@@ -2298,11 +2325,9 @@ func groupByRepository(notifications []github.Notification, smartSort bool, repo
 				repoOrderCache[repo] = i
 			}
 		}
-		// Sort groups using the cached order. Repos not in the cache
-		// (shouldn't happen) go to the end.
-		sort.SliceStable(groups, func(i, j int) bool {
-			oi, okI := repoOrderCache[groups[i].repo]
-			oj, okJ := repoOrderCache[groups[j].repo]
+		sort.SliceStable(unpinned, func(i, j int) bool {
+			oi, okI := repoOrderCache[unpinned[i].repo]
+			oj, okJ := repoOrderCache[unpinned[j].repo]
 			if !okI {
 				oi = len(repoOrderCache)
 			}
@@ -2312,15 +2337,17 @@ func groupByRepository(notifications []github.Notification, smartSort bool, repo
 			return oi < oj
 		})
 	} else {
-		// Chronological mode: sort by most-recent item descending
-		sort.SliceStable(groups, func(i, j int) bool {
-			return groups[i].latestAt.After(groups[j].latestAt)
+		sort.SliceStable(unpinned, func(i, j int) bool {
+			return unpinned[i].latestAt.After(unpinned[j].latestAt)
 		})
 	}
 
-	// Flatten back
+	// Flatten: pinned first, then unpinned
 	result := make([]github.Notification, 0, len(notifications))
-	for _, g := range groups {
+	for _, g := range pinned {
+		result = append(result, g.items...)
+	}
+	for _, g := range unpinned {
 		result = append(result, g.items...)
 	}
 	return result

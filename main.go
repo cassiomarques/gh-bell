@@ -147,6 +147,12 @@ func main() {
 		log.Printf("preview: comment first (default)")
 	}
 
+	// Pass pinned repos config
+	if len(cfg.PinnedRepos) > 0 {
+		opts = append(opts, tui.WithPinnedRepos(cfg.PinnedRepos))
+		log.Printf("pinned repos: %v", cfg.PinnedRepos)
+	}
+
 	app := tui.NewApp(client, opts...)
 	p := tea.NewProgram(app)
 

@@ -63,6 +63,12 @@ cleanup_days: 15
 # before the description — putting the content that triggered the notification
 # at the top of the preview, minimising scrolling. Set to false for description-first.
 # preview_comment_first: true
+
+# Pinned repositories: always shown at the top of the grouped list
+# (requires group_by_repo: true) in the order listed here.
+# pinned_repos:
+#   - owner/repo-name
+#   - owner/another-repo
 ```
 
 Environment variables `GH_BELL_TOKEN`, `GH_BELL_REFRESH`, `GH_BELL_CLEANUP_DAYS`, `GH_BELL_GROUP_BY_REPO`, `GH_BELL_SORT_MODE`, and `GH_BELL_PREVIEW_COMMENT_FIRST` still work and **override** the config file (useful for CI or one-off runs).
@@ -89,6 +95,7 @@ Environment variables `GH_BELL_TOKEN`, `GH_BELL_REFRESH`, `GH_BELL_CLEANUP_DAYS`
 - **Notification count** — status bar shows filtered/total count
 - **Catppuccin Mocha theme** — beautiful terminal colors out of the box
 - **Group by repository** — optional mode (`group_by_repo: true` in config) that groups notifications under repo headers, sorted by most recent activity. Off by default to preserve flat chronological ordering
+- **Pinned repos** — pin specific repositories to the top of the grouped list via `pinned_repos` in config, so your most important repos are always visible first
 - **Smart sort** — priority scoring engine that ranks notifications by actionability. Review requests, CI failures, and items needing your attention float to the top; informational items (merged, closed) sink. Toggle at runtime with `Ctrl+S` or set `sort_mode: smart` in config (enabled by default)
 - **Action labels** — when smart sort is active, the reason column shows computed action labels (e.g., "Review req.", "CI failed", "Approved") with color coding: red for urgent, yellow for attention needed, green for positive, dim for informational
 - **Review-requested filter** — `V` filters to notifications where your review was explicitly requested
