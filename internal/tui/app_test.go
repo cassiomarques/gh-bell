@@ -2537,6 +2537,71 @@ func TestGroupByRepo_PinnedRepos_NoPinnedPresent(t *testing.T) {
 	}
 }
 
+func TestGroupByRepo_StableOrderAcrossRefreshes(t *testing.T) {
+	// Repo order should remain stable across multiple filteredNotifications
+	// calls even when scores are invalidated, as long as the set of repos
+	// doesn't change. This prevents the disorienting reshuffling on refresh.
+	now := time.Now()
+	a := newTestApp()
+	a.groupByRepo = true
+	a.smartSort = true
+	a.notifications = []github.Notification{
+		{ID: "b1", UpdatedAt: now.Add(-30 * time.Minute), Repository: github.Repository{FullName: "org/repo-b"}},
+		{ID: "a1", UpdatedAt: now.Add(-1 * time.Hour), Repository: github.Repository{FullName: "org/repo-a"}},
+		{ID: "c1", UpdatedAt: now.Add(-2 * time.Hour), Repository: github.Repository{FullName: "org/repo-c"}},
+	}
+
+	// First call establishes order
+	first := a.filteredNotifications()
+	firstOrder := make([]string, len(first))
+	for i, n := range first {
+		firstOrder[i] = n.Repository.FullName
+	}
+
+	// Invalidate scores (simulates what happens on refresh)
+	a.invalidateScores()
+
+	// Second call should preserve the same repo order
+	second := a.filteredNotifications()
+	for i, n := range second {
+		if n.Repository.FullName != firstOrder[i] {
+			t.Errorf("position %d: repo order changed from %s to %s after invalidateScores",
+				i, firstOrder[i], n.Repository.FullName)
+		}
+	}
+}
+
+func TestGroupByRepo_NewRepoAppendsToEnd(t *testing.T) {
+	// When a new repo appears after initial ordering, it should be
+	// appended to the end rather than causing a full reshuffle.
+	now := time.Now()
+	a := newTestApp()
+	a.groupByRepo = true
+	a.smartSort = true
+	a.notifications = []github.Notification{
+		{ID: "b1", UpdatedAt: now.Add(-30 * time.Minute), Repository: github.Repository{FullName: "org/repo-b"}},
+		{ID: "a1", UpdatedAt: now.Add(-1 * time.Hour), Repository: github.Repository{FullName: "org/repo-a"}},
+	}
+
+	// Establish initial order
+	a.filteredNotifications()
+
+	// Add a new repo
+	a.notifications = append(a.notifications,
+		github.Notification{ID: "c1", UpdatedAt: now.Add(-10 * time.Minute), Repository: github.Repository{FullName: "org/repo-c"}},
+	)
+	a.invalidateScores()
+
+	filtered := a.filteredNotifications()
+	// repo-b and repo-a should keep their positions; repo-c appended at end
+	expectedRepos := []string{"org/repo-b", "org/repo-a", "org/repo-c"}
+	for i, n := range filtered {
+		if n.Repository.FullName != expectedRepos[i] {
+			t.Errorf("position %d: expected %s, got %s", i, expectedRepos[i], n.Repository.FullName)
+		}
+	}
+}
+
 // --- Scroll and cursor regression tests ---
 // These lock down scroll/offset/cursor behavior that the collapsible
 // groups refactor would touch.

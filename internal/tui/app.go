@@ -600,6 +600,10 @@ func (a App) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		a.loading = true
 		a.statusText = "Force resyncing all notifications…"
 		a.statusError = false
+		// Clear repo order cache so group positions are rebuilt from scratch
+		for k := range a.repoOrderCache {
+			delete(a.repoOrderCache, k)
+		}
 		return a, tea.Batch(forceResyncCmd(a.service, a.currentView), spinnerTickCmd())
 	case "1":
 		return a.switchView(github.ViewUnread)
@@ -2125,17 +2129,16 @@ func (a *App) removeNotification(threadID string) {
 	a.clampCursor()
 }
 
-// invalidateScores clears all cached scores and repo ordering so they
-// are recomputed on the next filteredNotifications() call.
+// invalidateScores clears cached scores and action labels so they are
+// recomputed on the next filteredNotifications() call. The repoOrderCache
+// is intentionally preserved to keep repo group positions stable across
+// refreshes — it is only updated incrementally when new repos appear.
 func (a App) invalidateScores() {
 	for k := range a.scoreCache {
 		delete(a.scoreCache, k)
 	}
 	for k := range a.actionCache {
 		delete(a.actionCache, k)
-	}
-	for k := range a.repoOrderCache {
-		delete(a.repoOrderCache, k)
 	}
 }
 
@@ -2317,12 +2320,18 @@ func groupByRepository(notifications []github.Notification, smartSort bool, repo
 
 	// Sort unpinned groups by score cache or chronology
 	if smartSort {
+		// Incremental cache: on first call, seed from current order.
+		// On subsequent calls, only add newly-appeared repos to the end
+		// so existing repos keep their stable positions.
 		if len(repoOrderCache) == 0 {
-			for k := range repoOrderCache {
-				delete(repoOrderCache, k)
-			}
 			for i, repo := range order {
 				repoOrderCache[repo] = i
+			}
+		} else {
+			for _, repo := range order {
+				if _, exists := repoOrderCache[repo]; !exists {
+					repoOrderCache[repo] = len(repoOrderCache)
+				}
 			}
 		}
 		sort.SliceStable(unpinned, func(i, j int) bool {
