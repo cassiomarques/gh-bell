@@ -529,6 +529,7 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				detail.ReviewDecision = e.ReviewDecision
 				detail.CIStatus = e.CIStatus
 				detail.Mergeable = e.Mergeable
+				detail.Draft = e.IsDraft
 				detail.LatestCommitAt = e.LatestCommitAt
 				detail.LatestReviewAt = e.LatestReviewAt
 			}
@@ -2038,6 +2039,22 @@ func (a App) filteredNotifications() []github.Notification {
 			}
 			result = append(result, n)
 		}
+	}
+
+	// Always hide draft PRs when enrichment data is available.
+	// This runs outside the filter block so drafts are excluded even
+	// with no active filters.
+	{
+		kept := result[:0]
+		for _, n := range result {
+			if n.Subject.Type == "PullRequest" {
+				if detail, ok := a.detailCache[n.ID]; ok && detail != nil && detail.Draft {
+					continue
+				}
+			}
+			kept = append(kept, n)
+		}
+		result = kept
 	}
 
 	// Smart sort: sort by priority score (highest first).

@@ -526,10 +526,11 @@ func (s *Store) UpdateDetailEnrichment(threadID string, e *github.PREnrichment) 
 			review_decision = ?,
 			ci_status = ?,
 			mergeable = ?,
+			draft = ?,
 			latest_commit_at = ?,
 			latest_review_at = ?
 		WHERE thread_id = ?`,
-		e.ReviewDecision, e.CIStatus, e.Mergeable,
+		e.ReviewDecision, e.CIStatus, e.Mergeable, e.IsDraft,
 		latestCommitAt, latestReviewAt,
 		threadID,
 	)

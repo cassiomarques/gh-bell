@@ -476,6 +476,46 @@ func TestApp_CycleTypeFilter(t *testing.T) {
 	}
 }
 
+func TestApp_DraftPRsHidden(t *testing.T) {
+	now := time.Now()
+	a := newTestApp()
+	a.notifications = []github.Notification{
+		{ID: "pr-draft", UpdatedAt: now, Unread: true, Subject: github.Subject{Title: "Draft PR", Type: "PullRequest"}, Repository: github.Repository{FullName: "org/repo"}},
+		{ID: "pr-ready", UpdatedAt: now, Unread: true, Subject: github.Subject{Title: "Ready PR", Type: "PullRequest"}, Repository: github.Repository{FullName: "org/repo"}},
+		{ID: "issue-1", UpdatedAt: now, Unread: true, Subject: github.Subject{Title: "An issue", Type: "Issue"}, Repository: github.Repository{FullName: "org/repo"}},
+	}
+	a.detailCache = map[string]*github.ThreadDetail{
+		"pr-draft": {State: "open", Draft: true, User: github.User{Login: "author"}},
+		"pr-ready": {State: "open", Draft: false, User: github.User{Login: "author"}},
+		"issue-1":  {State: "open", User: github.User{Login: "author"}},
+	}
+
+	filtered := a.filteredNotifications()
+	if len(filtered) != 2 {
+		t.Fatalf("expected 2 notifications (draft hidden), got %d", len(filtered))
+	}
+	for _, n := range filtered {
+		if n.ID == "pr-draft" {
+			t.Error("draft PR should be hidden from the list")
+		}
+	}
+}
+
+func TestApp_DraftPRsShownBeforeEnrichment(t *testing.T) {
+	// Before enrichment, we don't know if a PR is draft so it should still appear
+	now := time.Now()
+	a := newTestApp()
+	a.notifications = []github.Notification{
+		{ID: "pr-unknown", UpdatedAt: now, Unread: true, Subject: github.Subject{Title: "Unknown PR", Type: "PullRequest"}, Repository: github.Repository{FullName: "org/repo"}},
+	}
+	// No detail cached yet
+
+	filtered := a.filteredNotifications()
+	if len(filtered) != 1 {
+		t.Fatalf("expected 1 notification (no detail yet), got %d", len(filtered))
+	}
+}
+
 func TestApp_CycleOrgFilter(t *testing.T) {
 	a := newTestApp()
 	if len(a.knownOrgs) != 2 {

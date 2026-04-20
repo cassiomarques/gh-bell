@@ -23,6 +23,7 @@ type PREnrichment struct {
 	ReviewDecision string     // APPROVED, CHANGES_REQUESTED, REVIEW_REQUIRED, ""
 	CIStatus       string     // SUCCESS, FAILURE, PENDING, ERROR, ""
 	Mergeable      string     // MERGEABLE, CONFLICTING, UNKNOWN, ""
+	IsDraft        bool       // true if the PR is still in draft
 	LatestCommitAt *time.Time // most recent commit timestamp
 	LatestReviewAt *time.Time // most recent review timestamp
 }
@@ -90,6 +91,7 @@ func (c *Client) enrichBatch(gql *api.GraphQLClient, prs []PRRef) (map[string]*P
 		enrichment := &PREnrichment{
 			ReviewDecision: prData.ReviewDecision,
 			Mergeable:      prData.Mergeable,
+			IsDraft:        prData.IsDraft,
 		}
 
 		// Extract CI status from the last commit's status check rollup
@@ -124,8 +126,9 @@ type prNode struct {
 }
 
 type prFields struct {
-	ReviewDecision string        `json:"reviewDecision"`
-	Mergeable      string        `json:"mergeable"`
+	ReviewDecision string           `json:"reviewDecision"`
+	Mergeable      string           `json:"mergeable"`
+	IsDraft        bool             `json:"isDraft"`
 	Commits        commitConnection `json:"commits"`
 	Reviews        reviewConnection `json:"reviews"`
 }
@@ -164,6 +167,7 @@ func buildBatchQuery(prs []PRRef) string {
 		fmt.Fprintf(&b, "    pullRequest(number: %d) {\n", pr.Number)
 		b.WriteString("      reviewDecision\n")
 		b.WriteString("      mergeable\n")
+		b.WriteString("      isDraft\n")
 		b.WriteString("      commits(last: 1) { nodes { commit { statusCheckRollup { state } committedDate } } }\n")
 		b.WriteString("      reviews(last: 1) { nodes { submittedAt } }\n")
 		b.WriteString("    }\n")
