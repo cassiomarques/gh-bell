@@ -118,3 +118,10 @@ type logUpdatedMsg struct {
 type prEnrichmentMsg struct {
 	enrichments map[string]*github.PREnrichment
 }
+
+// detailFetchDebounceMsg fires after a short delay to trigger detail
+// fetching. If the cursor has moved to a different notification by the
+// time this arrives, it is ignored (debounce effect).
+type detailFetchDebounceMsg struct {
+	threadID string
+}

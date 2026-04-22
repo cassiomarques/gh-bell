@@ -29,6 +29,7 @@ import (
 
 const defaultRefreshInterval = 60 * time.Second
 const maxRetries = 3
+const detailFetchDebounce = 250 * time.Millisecond
 
 // authErrorMessage wraps an auth error with a clear, actionable message
 // telling the user to regenerate their token.
@@ -279,6 +280,15 @@ func loadCachedNotificationsCmd(svc *service.NotificationService, view github.Vi
 func spinnerTickCmd() tea.Cmd {
 	return tea.Tick(80*time.Millisecond, func(time.Time) tea.Msg {
 		return spinnerTickMsg{}
+	})
+}
+
+// scheduleDetailFetchCmd returns a Cmd that fires a debounced detail fetch
+// after a short delay. If the cursor moves before it fires, the resulting
+// message is ignored (the threadID won't match the current selection).
+func scheduleDetailFetchCmd(threadID string) tea.Cmd {
+	return tea.Tick(detailFetchDebounce, func(time.Time) tea.Msg {
+		return detailFetchDebounceMsg{threadID: threadID}
 	})
 }
 

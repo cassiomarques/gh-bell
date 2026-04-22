@@ -544,6 +544,14 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return a, nil
 
+	case detailFetchDebounceMsg:
+		// Debounced detail fetch: only proceed if cursor is still on the
+		// same notification that scheduled the fetch.
+		if n := a.selectedNotification(); n != nil && n.ID == msg.threadID {
+			return a, a.maybeFetchDetail()
+		}
+		return a, nil
+
 	case searchResultsMsg:
 		a.searchResultIDs = make(map[string]bool, len(msg.threadIDs))
 		for _, id := range msg.threadIDs {
@@ -862,12 +870,12 @@ func (a App) handleListKey(key string) (tea.Model, tea.Cmd) {
 		a.cursor++
 		a.clampCursor()
 		a.previewScroll = 0
-		return a, a.maybeFetchDetail()
+		return a, a.maybeFetchDetailDebounced()
 	case "k", "up":
 		a.cursor--
 		a.clampCursor()
 		a.previewScroll = 0
-		return a, a.maybeFetchDetail()
+		return a, a.maybeFetchDetailDebounced()
 	case "g":
 		// Double-tap 'g' for jump to top
 		now := time.Now()
@@ -876,7 +884,7 @@ func (a App) handleListKey(key string) (tea.Model, tea.Cmd) {
 			a.clampScroll()
 			a.lastKey = ""
 			a.previewScroll = 0
-			return a, a.maybeFetchDetail()
+			return a, a.maybeFetchDetailDebounced()
 		}
 		a.lastKey = "g"
 		a.lastKeyTime = now
@@ -887,7 +895,7 @@ func (a App) handleListKey(key string) (tea.Model, tea.Cmd) {
 		}
 		a.clampScroll()
 		a.previewScroll = 0
-		return a, a.maybeFetchDetail()
+		return a, a.maybeFetchDetailDebounced()
 
 	// Actions
 	case "space", " ":
@@ -2493,6 +2501,34 @@ func (a *App) maybeFetchDetail() tea.Cmd {
 		fetchThreadDetailCmd(a.client, a.service, n.ID, n.Subject.URL, n.Subject.LatestCommentURL, n),
 		spinnerTickCmd(),
 	)
+}
+
+// maybeFetchDetailDebounced checks caches instantly (in-memory + SQLite)
+// for an immediate cache hit, but defers the API call behind a short
+// debounce timer. This prevents wasting API calls when scrolling quickly
+// through the list — only the item the cursor rests on gets fetched.
+func (a *App) maybeFetchDetailDebounced() tea.Cmd {
+	n := a.selectedNotification()
+	if n == nil || (a.client == nil && a.service == nil) {
+		return nil
+	}
+	// In-memory cache hit → instant, no debounce
+	if _, ok := a.detailCache[n.ID]; ok {
+		fetchedAt, hasFetchedAt := a.detailFetchedAt[n.ID]
+		if !hasFetchedAt || !n.UpdatedAt.After(fetchedAt) {
+			return nil // cached and still fresh
+		}
+	}
+	// SQLite cache hit → instant, no debounce
+	if a.service != nil {
+		if detail, ok := a.service.GetCachedDetail(n.ID, n.UpdatedAt); ok {
+			a.detailCache[n.ID] = detail
+			a.detailFetchedAt[n.ID] = time.Now()
+			return nil
+		}
+	}
+	// Not cached — schedule a debounced fetch
+	return scheduleDetailFetchCmd(n.ID)
 }
 
 // maybeEnrichPRs returns a Cmd to batch-enrich PR notifications via GraphQL,
