@@ -263,9 +263,61 @@ func (c *Client) FetchThreadDetail(subjectURL, commentURL string) (*ThreadDetail
 			}
 			// Non-fatal: we still have subject detail even if comment fetch fails
 		}
+	} else if subjectURL != "" {
+		// When latest_comment_url is empty (common for read notifications or
+		// review-triggered events), fall back to fetching the most recent
+		// comment from the issues comments endpoint.
+		detail.LatestComment = c.fetchLatestComment(subjectURL)
 	}
 
 	return detail, nil
+}
+
+// fetchLatestComment tries to get the most recent comment for a PR or issue.
+// It checks issue comments (conversation) and, for PRs, review comments
+// (inline code reviews), returning whichever is most recent.
+// Returns nil on any error (non-fatal).
+func (c *Client) fetchLatestComment(subjectURL string) *Comment {
+	endpoint := stripAPIHost(subjectURL)
+	if endpoint == "" {
+		return nil
+	}
+
+	isPR := strings.Contains(endpoint, "/pulls/")
+
+	// Fetch latest issue comment (works for both issues and PRs)
+	var issueComment *Comment
+	issueEndpoint := strings.Replace(endpoint, "/pulls/", "/issues/", 1)
+	issueEndpoint += "/comments?per_page=1&sort=created&direction=desc"
+	var issueComments []Comment
+	if err := c.rest.Get(issueEndpoint, &issueComments); err == nil && len(issueComments) > 0 {
+		issueComment = &issueComments[0]
+	}
+
+	// For PRs, also check review comments (inline code comments)
+	var reviewComment *Comment
+	if isPR {
+		reviewEndpoint := endpoint + "/comments?per_page=1&sort=created&direction=desc"
+		var reviewComments []Comment
+		if err := c.rest.Get(reviewEndpoint, &reviewComments); err == nil && len(reviewComments) > 0 {
+			reviewComment = &reviewComments[0]
+		}
+	}
+
+	// Return the most recent of the two
+	switch {
+	case issueComment != nil && reviewComment != nil:
+		if reviewComment.CreatedAt.After(issueComment.CreatedAt) {
+			return reviewComment
+		}
+		return issueComment
+	case issueComment != nil:
+		return issueComment
+	case reviewComment != nil:
+		return reviewComment
+	default:
+		return nil
+	}
 }
 
 // stripAPIHost removes the "https://api.github.com/" prefix to get a
