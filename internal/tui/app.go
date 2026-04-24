@@ -2052,8 +2052,14 @@ func (a App) filteredNotifications() []github.Notification {
 	// Always hide draft PRs when enrichment data is available.
 	// This runs outside the filter block so drafts are excluded even
 	// with no active filters.
+	//
+	// IMPORTANT: We must NOT use result[:0] here because when no user
+	// filters are active, result aliases a.notifications. Using the
+	// backing array for in-place filtering corrupts a.notifications,
+	// causing duplicate items when filteredNotifications() is called
+	// again within the same View() cycle.
 	{
-		kept := result[:0]
+		kept := make([]github.Notification, 0, len(result))
 		for _, n := range result {
 			if n.Subject.Type == "PullRequest" {
 				if detail, ok := a.detailCache[n.ID]; ok && detail != nil && detail.Draft {
@@ -2116,6 +2122,7 @@ func (a App) filteredNotifications() []github.Notification {
 	if a.groupByRepo {
 		result = groupByRepository(result, a.smartSort, a.repoOrderCache, a.pinnedRepos)
 	}
+
 	return result
 }
 

@@ -3447,3 +3447,79 @@ func TestEnrichmentMsgUpdatesDetailCache(t *testing.T) {
 		t.Errorf("LatestCommitAt = %v, want %v", detail.LatestCommitAt, commitAt)
 	}
 }
+
+// TestDraftFilterNoDuplicates verifies that the draft PR filter doesn't corrupt
+// a.notifications via slice aliasing when no user filters are active.
+// Regression test: the old code used result[:0] which shared the backing array
+// with a.notifications, causing duplicates on repeated calls.
+func TestDraftFilterNoDuplicates(t *testing.T) {
+	now := time.Now()
+	notifs := []github.Notification{
+		{
+			ID: "100", Unread: true, Reason: "review_requested",
+			UpdatedAt: now.Add(-1 * time.Minute),
+			Subject:   github.Subject{Title: "Normal PR", Type: "PullRequest", URL: "https://api.github.com/repos/org/repo/pulls/1"},
+			Repository: github.Repository{FullName: "org/repo"},
+		},
+		{
+			ID: "101", Unread: true, Reason: "review_requested",
+			UpdatedAt: now.Add(-2 * time.Minute),
+			Subject:   github.Subject{Title: "Draft PR", Type: "PullRequest", URL: "https://api.github.com/repos/org/repo/pulls/2"},
+			Repository: github.Repository{FullName: "org/repo"},
+		},
+		{
+			ID: "102", Unread: true, Reason: "mention",
+			UpdatedAt: now.Add(-3 * time.Minute),
+			Subject:   github.Subject{Title: "Some Issue", Type: "Issue", URL: "https://api.github.com/repos/org/repo/issues/3"},
+			Repository: github.Repository{FullName: "org/repo"},
+		},
+	}
+
+	app := App{
+		notifications:     notifs,
+		detailCache:       make(map[string]*github.ThreadDetail),
+		detailFetchedAt:   make(map[string]time.Time),
+		scoreCache:        make(map[string]float64),
+		actionCache:       make(map[string]scoring.ActionReason),
+		repoOrderCache:    make(map[string]int),
+		previewRenderCache: make(map[string][]string),
+		groupByRepo:       true,
+	}
+
+	// Mark notification 101 as a draft PR via detailCache
+	app.detailCache["101"] = &github.ThreadDetail{Draft: true}
+
+	// First call: should return 2 items (draft filtered out)
+	result1 := app.filteredNotifications()
+	if len(result1) != 2 {
+		t.Fatalf("first call: got %d items, want 2", len(result1))
+	}
+
+	// Second call (simulates what happens in View → clampScroll):
+	// must also return 2 items, not 3 (no duplicates from array corruption)
+	result2 := app.filteredNotifications()
+	if len(result2) != 2 {
+		t.Fatalf("second call: got %d items, want 2 (slice aliasing corruption)", len(result2))
+	}
+
+	// Verify no duplicate IDs
+	seen := make(map[string]bool)
+	for _, n := range result2 {
+		if seen[n.ID] {
+			t.Errorf("duplicate notification ID %s in result", n.ID)
+		}
+		seen[n.ID] = true
+	}
+
+	// Verify a.notifications is NOT corrupted
+	if len(app.notifications) != 3 {
+		t.Errorf("a.notifications corrupted: len=%d, want 3", len(app.notifications))
+	}
+	ids := make(map[string]bool)
+	for _, n := range app.notifications {
+		ids[n.ID] = true
+	}
+	if !ids["100"] || !ids["101"] || !ids["102"] {
+		t.Errorf("a.notifications IDs corrupted: %v", app.notifications)
+	}
+}
