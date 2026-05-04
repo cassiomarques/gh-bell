@@ -124,6 +124,12 @@ func markReadCmd(client github.NotificationAPI, svc *service.NotificationService
 			if github.IsAuthError(err) {
 				return errorMsg{err: authErrorMessage(err)}
 			}
+			// 404 means the thread no longer exists on GitHub — treat as
+			// successfully read and remove it from the local list.
+			if github.IsNotFoundError(err) {
+				log.Printf("mark read: thread %s returned 404, removing ghost notification", threadID)
+				return threadMarkedReadMsg{threadID: threadID}
+			}
 			return errorMsg{err: err}
 		}
 		return threadMarkedReadMsg{threadID: threadID}
@@ -171,6 +177,10 @@ func muteThreadCmd(client github.NotificationAPI, svc *service.NotificationServi
 			if github.IsAuthError(err) {
 				return errorMsg{err: authErrorMessage(err)}
 			}
+			if github.IsNotFoundError(err) {
+				log.Printf("mute: thread %s returned 404, removing ghost notification", threadID)
+				return threadMutedMsg{threadID: threadID}
+			}
 			return errorMsg{err: err}
 		}
 		return threadMutedMsg{threadID: threadID}
@@ -196,6 +206,10 @@ func unsubscribeCmd(client github.NotificationAPI, svc *service.NotificationServ
 			if github.IsAuthError(err) {
 				return errorMsg{err: authErrorMessage(err)}
 			}
+			if github.IsNotFoundError(err) {
+				log.Printf("unsubscribe: thread %s returned 404, removing ghost notification", threadID)
+				return threadUnsubscribedMsg{threadID: threadID}
+			}
 			return errorMsg{err: err}
 		}
 		return threadUnsubscribedMsg{threadID: threadID}
@@ -216,6 +230,11 @@ func markDoneCmd(client github.NotificationAPI, svc *service.NotificationService
 		if err != nil {
 			if github.IsAuthError(err) {
 				return errorMsg{err: authErrorMessage(err)}
+			}
+			// 404 means the thread no longer exists — treat as done.
+			if github.IsNotFoundError(err) {
+				log.Printf("mark done: thread %s returned 404, removing ghost notification", threadID)
+				return threadDoneMsg{threadID: threadID}
 			}
 			return errorMsg{err: err}
 		}
@@ -251,6 +270,15 @@ func fetchThreadDetailCmd(client github.NotificationAPI, svc *service.Notificati
 		}
 		if err != nil {
 			log.Printf("fetch detail: error for thread %s: %v", threadID, err)
+			// On 404, return a minimal sentinel detail so it gets cached
+			// and we don't retry the fetch endlessly.
+			if github.IsNotFoundError(err) {
+				log.Printf("fetch detail: thread %s returned 404, caching as gone", threadID)
+				sentinel := &github.ThreadDetail{
+					Body: "*This thread no longer exists on GitHub (404 Not Found).*",
+				}
+				return threadDetailLoadedMsg{threadID: threadID, detail: sentinel}
+			}
 			return threadDetailErrorMsg{threadID: threadID}
 		}
 		return threadDetailLoadedMsg{threadID: threadID, detail: detail}
@@ -345,7 +373,10 @@ func markVisibleReadCmd(client github.NotificationAPI, svc *service.Notification
 				if github.IsAuthError(err) {
 					return errorMsg{err: authErrorMessage(err)}
 				}
-				continue
+				// 404 = ghost notification, treat as successfully read
+				if !github.IsNotFoundError(err) {
+					continue
+				}
 			}
 			ids = append(ids, n.ID)
 		}
@@ -376,7 +407,9 @@ func muteVisibleCmd(client github.NotificationAPI, svc *service.NotificationServ
 				if github.IsAuthError(err) {
 					return errorMsg{err: authErrorMessage(err)}
 				}
-				continue
+				if !github.IsNotFoundError(err) {
+					continue
+				}
 			}
 			ids = append(ids, n.ID)
 		}
@@ -402,7 +435,9 @@ func batchDoneCmd(client github.NotificationAPI, svc *service.NotificationServic
 				if github.IsAuthError(err) {
 					return errorMsg{err: authErrorMessage(err)}
 				}
-				continue
+				if !github.IsNotFoundError(err) {
+					continue
+				}
 			}
 			ids = append(ids, n.ID)
 		}

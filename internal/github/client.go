@@ -53,6 +53,16 @@ func IsServerError(err error) bool {
 		strings.Contains(s, "HTTP 504")
 }
 
+// IsNotFoundError returns true if the error indicates the resource no longer
+// exists (HTTP 404). This happens for "ghost" notifications whose underlying
+// thread/discussion has been deleted or moved.
+func IsNotFoundError(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(err.Error(), "HTTP 404")
+}
+
 // View controls which notifications to fetch.
 type View int
 
