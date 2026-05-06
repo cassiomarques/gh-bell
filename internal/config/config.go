@@ -47,9 +47,9 @@ token: ""
 #   - owner/repo-name
 #   - owner/another-repo
 
-# Auto-read closed: when enabled, notifications for closed or merged
+# Auto-read closed: when enabled, notifications for closed (not merged)
 # issues/PRs are automatically marked as read and hidden from the
-# Unread tab. They remain accessible via the Read tab. (default: false)
+# Unread tab. Merged PRs remain visible. (default: false)
 # auto_read_closed: false
 `
 
@@ -62,7 +62,7 @@ type Config struct {
 	SortMode            string `yaml:"sort_mode,omitempty"`            // "smart" or "chronological"
 	PreviewCommentFirst *bool    `yaml:"preview_comment_first,omitempty"` // show latest comment before description (default: true)
 	PinnedRepos         []string `yaml:"pinned_repos,omitempty"`          // repos pinned to top of grouped list
-	AutoReadClosed      bool     `yaml:"auto_read_closed,omitempty"`      // auto-mark closed/merged notifications as read
+	AutoReadClosed      bool     `yaml:"auto_read_closed,omitempty"`      // auto-mark closed (not merged) notifications as read
 }
 
 // Dir returns the gh-bell data/config directory (~/.gh-bell/).

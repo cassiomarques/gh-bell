@@ -3571,15 +3571,25 @@ func TestAutoReadClosedFilter(t *testing.T) {
 	app.detailCache["202"] = &github.ThreadDetail{State: "closed", Merged: true}
 	app.detailCache["203"] = &github.ThreadDetail{State: "open"}
 
-	// With auto_read_closed enabled on unread view: closed/merged should be hidden
+	// With auto_read_closed enabled on unread view: only closed (not merged) should be hidden
 	result := app.filteredNotifications()
-	if len(result) != 2 {
-		t.Fatalf("got %d items, want 2 (only open items)", len(result))
+	if len(result) != 3 {
+		t.Fatalf("got %d items, want 3 (closed filtered, merged kept)", len(result))
 	}
 	for _, n := range result {
-		if n.ID == "201" || n.ID == "202" {
-			t.Errorf("closed/merged notification %s should have been filtered out", n.ID)
+		if n.ID == "201" {
+			t.Errorf("closed notification %s should have been filtered out", n.ID)
 		}
+	}
+	// Merged PR should still be visible
+	found := false
+	for _, n := range result {
+		if n.ID == "202" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("merged notification 202 should NOT be filtered out")
 	}
 
 	// When auto_read_closed is disabled, all 4 should appear

@@ -522,14 +522,13 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if a.detailLoading == msg.threadID {
 			a.detailLoading = ""
 		}
-		// Auto-mark closed/merged notifications as read when config is enabled.
+		// Auto-mark closed (not merged) notifications as read when config is enabled.
 		// This is a deferred side-effect (Cmd): we return it to the Bubble Tea
 		// runtime which will execute the API call asynchronously and deliver
 		// the resulting message (threadMarkedReadMsg) back to Update later.
 		var autoReadCmd tea.Cmd
 		if a.autoReadClosed && a.currentView == github.ViewUnread && msg.detail != nil {
-			state := effectiveState(msg.detail)
-			if state == "closed" || state == "merged" {
+			if msg.detail.State == "closed" && !msg.detail.Merged {
 				autoReadCmd = markReadCmd(a.client, a.service, msg.threadID)
 			}
 		}
@@ -2092,15 +2091,14 @@ func (a App) filteredNotifications() []github.Notification {
 		result = kept
 	}
 
-	// When auto_read_closed is enabled, hide notifications for closed/merged
-	// issues and PRs from the unread view. They'll only be accessible via
-	// the Read tab after being auto-marked as read.
+	// When auto_read_closed is enabled, hide notifications for closed (not merged)
+	// issues and PRs from the unread view. Merged PRs are kept visible since
+	// the user may want to know about them.
 	if a.autoReadClosed && a.currentView == github.ViewUnread {
 		kept := make([]github.Notification, 0, len(result))
 		for _, n := range result {
 			if detail, ok := a.detailCache[n.ID]; ok && detail != nil {
-				state := effectiveState(detail)
-				if state == "closed" || state == "merged" {
+				if detail.State == "closed" && !detail.Merged {
 					continue
 				}
 			}
