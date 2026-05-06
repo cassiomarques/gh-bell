@@ -510,6 +510,77 @@ func TestMuteThreadIdempotent(t *testing.T) {
 	}
 }
 
+// --- Ghost Thread Tests ---
+
+func TestGhostThreadsBlockUpsert(t *testing.T) {
+	s := testStore(t)
+
+	// Insert a notification
+	n := github.Notification{
+		ID: "ghost-1", Unread: true, Reason: "subscribed",
+		UpdatedAt:  time.Now().UTC(),
+		Subject:    github.Subject{Title: "Deleted discussion", Type: "Discussion"},
+		Repository: github.Repository{FullName: "org/repo"},
+	}
+	if err := s.UpsertNotifications([]github.Notification{n}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Mark it as ghost
+	if err := s.MarkGhost("ghost-1"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Delete the notification (as the service would)
+	if err := s.DeleteNotification("ghost-1"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Verify it's gone
+	all, err := s.ListNotifications(false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, notif := range all {
+		if notif.ID == "ghost-1" {
+			t.Fatal("ghost notification should have been deleted")
+		}
+	}
+
+	// Now simulate a refresh: API returns the same notification again
+	if err := s.UpsertNotifications([]github.Notification{n}); err != nil {
+		t.Fatal(err)
+	}
+
+	// It should NOT reappear because it's in the ghost list
+	all, err = s.ListNotifications(false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, notif := range all {
+		if notif.ID == "ghost-1" {
+			t.Fatal("ghost notification reappeared after upsert — ghost_threads filter not working")
+		}
+	}
+
+	// Verify IsGhost works
+	isGhost, err := s.IsGhost("ghost-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !isGhost {
+		t.Error("expected IsGhost to return true")
+	}
+
+	isGhost, err = s.IsGhost("not-ghost")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if isGhost {
+		t.Error("expected IsGhost to return false for unknown ID")
+	}
+}
+
 // --- Preference Tests ---
 
 func TestGetSetPref(t *testing.T) {

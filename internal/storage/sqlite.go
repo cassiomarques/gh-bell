@@ -108,6 +108,11 @@ func (s *Store) migrate() error {
 			muted_at        DATETIME NOT NULL
 		);
 
+		CREATE TABLE IF NOT EXISTS ghost_threads (
+			thread_id       TEXT PRIMARY KEY,
+			detected_at     DATETIME NOT NULL
+		);
+
 		CREATE TABLE IF NOT EXISTS preferences (
 			key   TEXT PRIMARY KEY,
 			value TEXT
@@ -169,12 +174,26 @@ func (s *Store) UpsertNotification(n github.Notification) error {
 }
 
 // UpsertNotifications upserts a batch of notifications in a single transaction.
+// Ghost threads (404'd) are skipped to prevent them from reappearing.
 func (s *Store) UpsertNotifications(notifications []github.Notification) error {
 	tx, err := s.db.Begin()
 	if err != nil {
 		return fmt.Errorf("begin transaction: %w", err)
 	}
 	defer tx.Rollback()
+
+	// Load ghost set to skip them during upsert
+	ghostSet := make(map[string]bool)
+	rows, err := tx.Query("SELECT thread_id FROM ghost_threads")
+	if err == nil {
+		for rows.Next() {
+			var id string
+			if rows.Scan(&id) == nil {
+				ghostSet[id] = true
+			}
+		}
+		rows.Close()
+	}
 
 	now := time.Now().UTC()
 	stmt, err := tx.Prepare(`
@@ -201,6 +220,9 @@ func (s *Store) UpsertNotifications(notifications []github.Notification) error {
 	defer stmt.Close()
 
 	for _, n := range notifications {
+		if ghostSet[n.ID] {
+			continue
+		}
 		_, err := stmt.Exec(
 			n.ID, n.Unread, n.Reason, n.UpdatedAt.UTC(), n.Subject.Title,
 			n.Subject.Type, n.Subject.URL, n.Subject.LatestCommentURL,
@@ -595,6 +617,27 @@ func (s *Store) ListMuted() ([]MutedThread, error) {
 		result = append(result, m)
 	}
 	return result, rows.Err()
+}
+
+// --- Ghost Threads ---
+// Ghost threads are notifications whose underlying resource has been deleted
+// (returns 404). We track them so they don't reappear on the next API refresh.
+
+// MarkGhost records a thread ID as a ghost (404 on GitHub).
+func (s *Store) MarkGhost(threadID string) error {
+	_, err := s.db.Exec(`
+		INSERT INTO ghost_threads (thread_id, detected_at) VALUES (?, ?)
+		ON CONFLICT(thread_id) DO NOTHING`,
+		threadID, time.Now().UTC(),
+	)
+	return err
+}
+
+// IsGhost checks whether a thread is marked as a ghost.
+func (s *Store) IsGhost(threadID string) (bool, error) {
+	var count int
+	err := s.db.QueryRow("SELECT COUNT(*) FROM ghost_threads WHERE thread_id = ?", threadID).Scan(&count)
+	return count > 0, err
 }
 
 // --- Preferences ---

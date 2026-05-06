@@ -422,6 +422,18 @@ func (s *NotificationService) UnmuteThread(threadID string) error {
 	return s.store.UnmuteThread(threadID)
 }
 
+// MarkGhost records a thread as a ghost (deleted on GitHub, returns 404).
+// Ghost threads are excluded from future upserts so they don't reappear.
+func (s *NotificationService) MarkGhost(threadID string) {
+	if err := s.store.MarkGhost(threadID); err != nil {
+		log.Printf("warning: failed to mark thread %s as ghost: %v", threadID, err)
+	}
+	// Also delete from local cache so it's gone immediately
+	if err := s.store.DeleteNotification(threadID); err != nil {
+		log.Printf("warning: failed to delete ghost notification %s: %v", threadID, err)
+	}
+}
+
 // --- Preferences ---
 
 // GetPref retrieves a stored preference.
