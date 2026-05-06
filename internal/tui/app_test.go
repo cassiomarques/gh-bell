@@ -3523,3 +3523,109 @@ func TestDraftFilterNoDuplicates(t *testing.T) {
 		t.Errorf("a.notifications IDs corrupted: %v", app.notifications)
 	}
 }
+
+func TestAutoReadClosedFilter(t *testing.T) {
+	now := time.Now()
+	notifs := []github.Notification{
+		{
+			ID: "200", Unread: true, Reason: "subscribed",
+			UpdatedAt: now.Add(-1 * time.Minute),
+			Subject:   github.Subject{Title: "Open PR", Type: "PullRequest", URL: "https://api.github.com/repos/org/repo/pulls/10"},
+			Repository: github.Repository{FullName: "org/repo"},
+		},
+		{
+			ID: "201", Unread: true, Reason: "subscribed",
+			UpdatedAt: now.Add(-2 * time.Minute),
+			Subject:   github.Subject{Title: "Closed Issue", Type: "Issue", URL: "https://api.github.com/repos/org/repo/issues/11"},
+			Repository: github.Repository{FullName: "org/repo"},
+		},
+		{
+			ID: "202", Unread: true, Reason: "subscribed",
+			UpdatedAt: now.Add(-3 * time.Minute),
+			Subject:   github.Subject{Title: "Merged PR", Type: "PullRequest", URL: "https://api.github.com/repos/org/repo/pulls/12"},
+			Repository: github.Repository{FullName: "org/repo"},
+		},
+		{
+			ID: "203", Unread: true, Reason: "mention",
+			UpdatedAt: now.Add(-4 * time.Minute),
+			Subject:   github.Subject{Title: "Another Open Issue", Type: "Issue", URL: "https://api.github.com/repos/org/repo/issues/13"},
+			Repository: github.Repository{FullName: "org/repo"},
+		},
+	}
+
+	app := App{
+		notifications:      notifs,
+		currentView:        github.ViewUnread,
+		autoReadClosed:     true,
+		detailCache:        make(map[string]*github.ThreadDetail),
+		detailFetchedAt:    make(map[string]time.Time),
+		scoreCache:         make(map[string]float64),
+		actionCache:        make(map[string]scoring.ActionReason),
+		repoOrderCache:     make(map[string]int),
+		previewRenderCache: make(map[string][]string),
+	}
+
+	// Set detail cache: 201 is closed, 202 is merged, 200/203 are open
+	app.detailCache["200"] = &github.ThreadDetail{State: "open"}
+	app.detailCache["201"] = &github.ThreadDetail{State: "closed"}
+	app.detailCache["202"] = &github.ThreadDetail{State: "closed", Merged: true}
+	app.detailCache["203"] = &github.ThreadDetail{State: "open"}
+
+	// With auto_read_closed enabled on unread view: closed/merged should be hidden
+	result := app.filteredNotifications()
+	if len(result) != 2 {
+		t.Fatalf("got %d items, want 2 (only open items)", len(result))
+	}
+	for _, n := range result {
+		if n.ID == "201" || n.ID == "202" {
+			t.Errorf("closed/merged notification %s should have been filtered out", n.ID)
+		}
+	}
+
+	// When auto_read_closed is disabled, all 4 should appear
+	app.autoReadClosed = false
+	result = app.filteredNotifications()
+	if len(result) != 4 {
+		t.Fatalf("with feature disabled: got %d items, want 4", len(result))
+	}
+
+	// When on Read view, closed items should NOT be hidden (even with feature enabled)
+	app.autoReadClosed = true
+	app.currentView = github.ViewAll
+	result = app.filteredNotifications()
+	if len(result) != 4 {
+		t.Fatalf("on Read view: got %d items, want 4", len(result))
+	}
+}
+
+func TestAutoReadClosedNoDetailYet(t *testing.T) {
+	// When detail hasn't loaded yet, the notification should still appear
+	// (it can't be classified as closed without enrichment data)
+	now := time.Now()
+	notifs := []github.Notification{
+		{
+			ID: "300", Unread: true, Reason: "subscribed",
+			UpdatedAt: now,
+			Subject:   github.Subject{Title: "Unknown State", Type: "Issue", URL: "https://api.github.com/repos/org/repo/issues/20"},
+			Repository: github.Repository{FullName: "org/repo"},
+		},
+	}
+
+	app := App{
+		notifications:      notifs,
+		currentView:        github.ViewUnread,
+		autoReadClosed:     true,
+		detailCache:        make(map[string]*github.ThreadDetail),
+		detailFetchedAt:    make(map[string]time.Time),
+		scoreCache:         make(map[string]float64),
+		actionCache:        make(map[string]scoring.ActionReason),
+		repoOrderCache:     make(map[string]int),
+		previewRenderCache: make(map[string][]string),
+	}
+
+	// No detail in cache — notification should still be visible
+	result := app.filteredNotifications()
+	if len(result) != 1 {
+		t.Fatalf("got %d items, want 1 (no detail yet, can't filter)", len(result))
+	}
+}

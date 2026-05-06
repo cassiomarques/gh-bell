@@ -156,6 +156,9 @@ type App struct {
 	// Pinned repos (always shown at top when groupByRepo is enabled)
 	pinnedRepos []string
 
+	// Auto-read closed/merged notifications
+	autoReadClosed bool
+
 	// Header cache (rebuilt on resize)
 	headerCache string
 }
@@ -218,6 +221,13 @@ func WithPreviewCommentFirst(enabled bool) Option {
 func WithPinnedRepos(repos []string) Option {
 	return func(a *App) {
 		a.pinnedRepos = repos
+	}
+}
+
+// WithAutoReadClosed enables automatic marking of closed/merged notifications as read.
+func WithAutoReadClosed(enabled bool) Option {
+	return func(a *App) {
+		a.autoReadClosed = enabled
 	}
 }
 
@@ -512,8 +522,19 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if a.detailLoading == msg.threadID {
 			a.detailLoading = ""
 		}
+		// Auto-mark closed/merged notifications as read when config is enabled.
+		// This is a deferred side-effect (Cmd): we return it to the Bubble Tea
+		// runtime which will execute the API call asynchronously and deliver
+		// the resulting message (threadMarkedReadMsg) back to Update later.
+		var autoReadCmd tea.Cmd
+		if a.autoReadClosed && a.currentView == github.ViewUnread && msg.detail != nil {
+			state := effectiveState(msg.detail)
+			if state == "closed" || state == "merged" {
+				autoReadCmd = markReadCmd(a.client, a.service, msg.threadID)
+			}
+		}
 		// Try enriching PRs now that we have a new detail cached
-		return a, a.maybeEnrichPRs()
+		return a, tea.Batch(a.maybeEnrichPRs(), autoReadCmd)
 
 	case threadDetailErrorMsg:
 		if a.detailLoading == msg.threadID {
@@ -2063,6 +2084,23 @@ func (a App) filteredNotifications() []github.Notification {
 		for _, n := range result {
 			if n.Subject.Type == "PullRequest" {
 				if detail, ok := a.detailCache[n.ID]; ok && detail != nil && detail.Draft {
+					continue
+				}
+			}
+			kept = append(kept, n)
+		}
+		result = kept
+	}
+
+	// When auto_read_closed is enabled, hide notifications for closed/merged
+	// issues and PRs from the unread view. They'll only be accessible via
+	// the Read tab after being auto-marked as read.
+	if a.autoReadClosed && a.currentView == github.ViewUnread {
+		kept := make([]github.Notification, 0, len(result))
+		for _, n := range result {
+			if detail, ok := a.detailCache[n.ID]; ok && detail != nil {
+				state := effectiveState(detail)
+				if state == "closed" || state == "merged" {
 					continue
 				}
 			}

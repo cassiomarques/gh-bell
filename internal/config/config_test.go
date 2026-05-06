@@ -191,3 +191,51 @@ func TestLoad_GroupByRepoEnvOverride(t *testing.T) {
 		t.Fatal("expected group_by_repo false from env=false")
 	}
 }
+
+func TestLoad_AutoReadClosedFromYAML(t *testing.T) {
+	content := `token: ghp_test
+auto_read_closed: true
+`
+	cfg := &Config{}
+	if err := parseConfig([]byte(content), cfg); err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if !cfg.AutoReadClosed {
+		t.Fatal("expected auto_read_closed true")
+	}
+}
+
+func TestLoad_AutoReadClosedDefaultFalse(t *testing.T) {
+	content := `token: ghp_test
+`
+	cfg := &Config{}
+	if err := parseConfig([]byte(content), cfg); err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if cfg.AutoReadClosed {
+		t.Fatal("expected auto_read_closed false by default")
+	}
+}
+
+func TestLoad_AutoReadClosedEnvOverride(t *testing.T) {
+	cfg := &Config{}
+	t.Setenv("GH_BELL_AUTO_READ_CLOSED", "true")
+	applyEnvOverrides(cfg)
+	if !cfg.AutoReadClosed {
+		t.Fatal("expected auto_read_closed true from env")
+	}
+
+	cfg2 := &Config{}
+	t.Setenv("GH_BELL_AUTO_READ_CLOSED", "1")
+	applyEnvOverrides(cfg2)
+	if !cfg2.AutoReadClosed {
+		t.Fatal("expected auto_read_closed true from env=1")
+	}
+
+	cfg3 := &Config{AutoReadClosed: true}
+	t.Setenv("GH_BELL_AUTO_READ_CLOSED", "false")
+	applyEnvOverrides(cfg3)
+	if cfg3.AutoReadClosed {
+		t.Fatal("expected auto_read_closed false from env=false")
+	}
+}

@@ -153,6 +153,12 @@ func main() {
 		log.Printf("pinned repos: %v", cfg.PinnedRepos)
 	}
 
+	// Pass auto-read-closed config
+	if cfg.AutoReadClosed {
+		opts = append(opts, tui.WithAutoReadClosed(true))
+		log.Printf("auto-read-closed enabled")
+	}
+
 	app := tui.NewApp(client, opts...)
 	p := tea.NewProgram(app)
 

@@ -46,6 +46,11 @@ token: ""
 # pinned_repos:
 #   - owner/repo-name
 #   - owner/another-repo
+
+# Auto-read closed: when enabled, notifications for closed or merged
+# issues/PRs are automatically marked as read and hidden from the
+# Unread tab. They remain accessible via the Read tab. (default: false)
+# auto_read_closed: false
 `
 
 // Config holds all gh-bell configuration.
@@ -57,6 +62,7 @@ type Config struct {
 	SortMode            string `yaml:"sort_mode,omitempty"`            // "smart" or "chronological"
 	PreviewCommentFirst *bool    `yaml:"preview_comment_first,omitempty"` // show latest comment before description (default: true)
 	PinnedRepos         []string `yaml:"pinned_repos,omitempty"`          // repos pinned to top of grouped list
+	AutoReadClosed      bool     `yaml:"auto_read_closed,omitempty"`      // auto-mark closed/merged notifications as read
 }
 
 // Dir returns the gh-bell data/config directory (~/.gh-bell/).
@@ -148,6 +154,9 @@ func applyEnvOverrides(cfg *Config) {
 	if s := os.Getenv("GH_BELL_PREVIEW_COMMENT_FIRST"); s != "" {
 		v := s == "1" || s == "true"
 		cfg.PreviewCommentFirst = &v
+	}
+	if s := os.Getenv("GH_BELL_AUTO_READ_CLOSED"); s != "" {
+		cfg.AutoReadClosed = s == "1" || s == "true"
 	}
 }
 

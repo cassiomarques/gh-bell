@@ -69,9 +69,14 @@ cleanup_days: 15
 # pinned_repos:
 #   - owner/repo-name
 #   - owner/another-repo
+
+# Auto-read closed: when enabled, notifications for closed or merged
+# issues/PRs are automatically marked as read and hidden from the
+# Unread tab. They remain accessible via the All tab. (default: false)
+# auto_read_closed: false
 ```
 
-Environment variables `GH_BELL_TOKEN`, `GH_BELL_REFRESH`, `GH_BELL_CLEANUP_DAYS`, `GH_BELL_GROUP_BY_REPO`, `GH_BELL_SORT_MODE`, and `GH_BELL_PREVIEW_COMMENT_FIRST` still work and **override** the config file (useful for CI or one-off runs).
+Environment variables `GH_BELL_TOKEN`, `GH_BELL_REFRESH`, `GH_BELL_CLEANUP_DAYS`, `GH_BELL_GROUP_BY_REPO`, `GH_BELL_SORT_MODE`, `GH_BELL_PREVIEW_COMMENT_FIRST`, and `GH_BELL_AUTO_READ_CLOSED` still work and **override** the config file (useful for CI or one-off runs).
 
 ## Features
 
@@ -101,6 +106,7 @@ Environment variables `GH_BELL_TOKEN`, `GH_BELL_REFRESH`, `GH_BELL_CLEANUP_DAYS`
 - **Review-requested filter** — `V` filters to notifications where your review was explicitly requested
 - **GraphQL enrichment** — automatically fetches PR review decision, CI status, and merge conflicts via GitHub's GraphQL API. Data is displayed in the preview pane and improves smart sort accuracy. Enrichment runs in the background and results are persisted in SQLite
 - **Comment-first preview** — when a notification has a latest comment, it appears above the description in the preview pane (configurable via `preview_comment_first` in config)
+- **Auto-read closed** — automatically marks notifications for closed or merged issues/PRs as read and hides them from the Unread tab. Keeps your inbox focused on actionable items. Enable with `auto_read_closed: true` in config (off by default)
 
 ## Keybindings
 
